@@ -15,7 +15,9 @@ find_package(catkin REQUIRED COMPONENTS
     cv_bridge
     )
 
-find_package(OpenCV REQUIRED)
+set(OpenCV_DIR /usr/include/opencv4)
+find_package(OpenCV 4 REQUIRED)
+INCLUDE_DIRECTORIES("/usr/include/opencv4")
 
 # message(WARNING "OpenCV_VERSION: ${OpenCV_VERSION}")
 
