@@ -11,10 +11,6 @@
 
 #define SHOW_UNDISTORTION 0
 
-vector<uchar> r_status;
-vector<float> r_err;
-queue<sensor_msgs::ImageConstPtr> img_buf;
-
 ros::Publisher pub_img,pub_match;
 ros::Publisher pub_restart;
 

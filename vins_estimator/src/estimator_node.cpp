@@ -95,8 +95,7 @@ void update()
 
 }
 
-std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>>
-getMeasurements()
+std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> getMeasurements()
 {
     std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
 
@@ -148,8 +147,6 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
     imu_buf.push(imu_msg);
     m_buf.unlock();
     con.notify_one();
-
-    last_imu_t = imu_msg->header.stamp.toSec();
 
     {
         std::lock_guard<std::mutex> lg(m_state);
