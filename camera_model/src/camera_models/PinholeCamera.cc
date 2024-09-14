@@ -449,9 +449,7 @@ PinholeCamera::liftSphere(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
 void
 PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
 {
-    double mx_d, my_d,mx2_d, mxy_d, my2_d, mx_u, my_u;
-    double rho2_d, rho4_d, radDist_d, Dx_d, Dy_d, inv_denom_d;
-    //double lambda;
+    double mx_d, my_d, mx_u, my_u;
 
     // Lift points to normalised plane
     mx_d = m_inv_K11 * p(0) + m_inv_K13;
@@ -464,44 +462,19 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
     }
     else
     {
-        if (0)
-        {
-            double k1 = mParameters.k1();
-            double k2 = mParameters.k2();
-            double p1 = mParameters.p1();
-            double p2 = mParameters.p2();
+        // Recursive distortion model
+        int n = 8;
+        Eigen::Vector2d d_u;
+        distortion(Eigen::Vector2d(mx_d, my_d), d_u);
+        // Approximate value
+        mx_u = mx_d - d_u(0);
+        my_u = my_d - d_u(1);
 
-            // Apply inverse distortion model
-            // proposed by Heikkila
-            mx2_d = mx_d*mx_d;
-            my2_d = my_d*my_d;
-            mxy_d = mx_d*my_d;
-            rho2_d = mx2_d+my2_d;
-            rho4_d = rho2_d*rho2_d;
-            radDist_d = k1*rho2_d+k2*rho4_d;
-            Dx_d = mx_d*radDist_d + p2*(rho2_d+2*mx2_d) + 2*p1*mxy_d;
-            Dy_d = my_d*radDist_d + p1*(rho2_d+2*my2_d) + 2*p2*mxy_d;
-            inv_denom_d = 1/(1+4*k1*rho2_d+6*k2*rho4_d+8*p1*my_d+8*p2*mx_d);
-
-            mx_u = mx_d - inv_denom_d*Dx_d;
-            my_u = my_d - inv_denom_d*Dy_d;
-        }
-        else
+        for (int i = 1; i < n; ++i)
         {
-            // Recursive distortion model
-            int n = 8;
-            Eigen::Vector2d d_u;
-            distortion(Eigen::Vector2d(mx_d, my_d), d_u);
-            // Approximate value
+            distortion(Eigen::Vector2d(mx_u, my_u), d_u);
             mx_u = mx_d - d_u(0);
             my_u = my_d - d_u(1);
-
-            for (int i = 1; i < n; ++i)
-            {
-                distortion(Eigen::Vector2d(mx_u, my_u), d_u);
-                mx_u = mx_d - d_u(0);
-                my_u = my_d - d_u(1);
-            }
         }
     }
 
@@ -540,73 +513,6 @@ PinholeCamera::spaceToPlane(const Eigen::Vector3d& P, Eigen::Vector2d& p) const
     p << mParameters.fx() * p_d(0) + mParameters.cx(),
          mParameters.fy() * p_d(1) + mParameters.cy();
 }
-
-#if 0
-/**
- * \brief Project a 3D point to the image plane and calculate Jacobian
- *
- * \param P 3D point coordinates
- * \param p return value, contains the image point coordinates
- */
-void
-PinholeCamera::spaceToPlane(const Eigen::Vector3d& P, Eigen::Vector2d& p,
-                            Eigen::Matrix<double,2,3>& J) const
-{
-    Eigen::Vector2d p_u, p_d;
-    double norm, inv_denom;
-    double dxdmx, dydmx, dxdmy, dydmy;
-
-    norm = P.norm();
-    // Project points to the normalised plane
-    inv_denom = 1.0 / P(2);
-    p_u << inv_denom * P(0), inv_denom * P(1);
-
-    // Calculate jacobian
-    double dudx = inv_denom;
-    double dvdx = 0.0;
-    double dudy = 0.0;
-    double dvdy = inv_denom;
-    inv_denom = - inv_denom * inv_denom;
-    double dudz = P(0) * inv_denom;
-    double dvdz = P(1) * inv_denom;
-
-    if (m_noDistortion)
-    {
-        p_d = p_u;
-    }
-    else
-    {
-        // Apply distortion
-        Eigen::Vector2d d_u;
-        distortion(p_u, d_u);
-        p_d = p_u + d_u;
-    }
-
-    double fx = mParameters.fx();
-    double fy = mParameters.fy();
-
-    // Make the product of the jacobians
-    // and add projection matrix jacobian
-    inv_denom = fx * (dudx * dxdmx + dvdx * dxdmy); // reuse
-    dvdx = fy * (dudx * dydmx + dvdx * dydmy);
-    dudx = inv_denom;
-
-    inv_denom = fx * (dudy * dxdmx + dvdy * dxdmy); // reuse
-    dvdy = fy * (dudy * dydmx + dvdy * dydmy);
-    dudy = inv_denom;
-
-    inv_denom = fx * (dudz * dxdmx + dvdz * dxdmy); // reuse
-    dvdz = fy * (dudz * dydmx + dvdz * dydmy);
-    dudz = inv_denom;
-
-    // Apply generalised projection matrix
-    p << fx * p_d(0) + mParameters.cx(),
-         fy * p_d(1) + mParameters.cy();
-
-    J << dudx, dudy, dudz,
-         dvdx, dvdy, dvdz;
-}
-#endif
 
 /**
  * \brief Projects an undistorted 2D point p_u to the image plane

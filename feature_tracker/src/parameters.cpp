@@ -69,6 +69,4 @@ void readParameters(ros::NodeHandle &n)
         FREQ = 100;
 
     fsSettings.release();
-
-
 }
