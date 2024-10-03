@@ -81,7 +81,6 @@ void FeatureTracker::addPoints()
 void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
 {
     cv::Mat img;
-    TicToc t_r;
     cur_time = _cur_time;
 
     if (EQUALIZE)

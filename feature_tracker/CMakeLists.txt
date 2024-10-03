@@ -13,7 +13,9 @@ find_package(catkin REQUIRED COMPONENTS
     camera_model
     )
 
-find_package(OpenCV REQUIRED)
+set(OpenCV_DIR /usr/include/opencv4)
+find_package(OpenCV 4 REQUIRED)
+INCLUDE_DIRECTORIES("/usr/include/opencv4")
 
 catkin_package()
 

@@ -11,10 +11,6 @@
 
 #define SHOW_UNDISTORTION 0
 
-vector<uchar> r_status;
-vector<float> r_err;
-queue<sensor_msgs::ImageConstPtr> img_buf;
-
 ros::Publisher pub_img,pub_match;
 ros::Publisher pub_restart;
 
@@ -123,7 +119,6 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         feature_points->header = img_msg->header;
         feature_points->header.frame_id = "world";
 
-        vector<set<int>> hash_ids(NUM_OF_CAM);
         for (int i = 0; i < NUM_OF_CAM; i++)
         {
             auto &un_pts = trackerData[i].cur_un_pts;
@@ -135,7 +130,6 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                 if (trackerData[i].track_cnt[j] > 1)
                 {
                     int p_id = ids[j];
-                    hash_ids[i].insert(p_id);
                     geometry_msgs::Point32 p;
                     p.x = un_pts[j].x;
                     p.y = un_pts[j].y;

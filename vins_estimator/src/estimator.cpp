@@ -53,11 +53,10 @@ void Estimator::clearState()
     }
 
     solver_flag = INITIAL;
-    first_imu = false,
+    first_imu = false;
     sum_of_back = 0;
     sum_of_front = 0;
     frame_count = 0;
-    solver_flag = INITIAL;
     initial_timestamp = 0;
     all_image_frame.clear();
     td = TD;
@@ -97,8 +96,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     if (frame_count != 0)
     {
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
-        //if(solver_flag != NON_LINEAR)
-            tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
+        tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
 
         dt_buf[frame_count].push_back(dt);
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
@@ -217,9 +215,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 }
 bool Estimator::initialStructure()
 {
-    TicToc t_sfm;
-    //check imu observibility
-    {
+    { //check imu observibility
         map<double, ImageFrame>::iterator frame_it;
         Vector3d sum_g;
         for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
@@ -924,7 +920,7 @@ void Estimator::optimization()
         }
         vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
 
-        if (last_marginalization_info)
+        if (last_marginalization_info != nullptr)
             delete last_marginalization_info;
         last_marginalization_info = marginalization_info;
         last_marginalization_parameter_blocks = parameter_blocks;
@@ -990,7 +986,7 @@ void Estimator::optimization()
             }
             
             vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
-            if (last_marginalization_info)
+            if (last_marginalization_info != nullptr)
                 delete last_marginalization_info;
             last_marginalization_info = marginalization_info;
             last_marginalization_parameter_blocks = parameter_blocks;
@@ -1004,7 +1000,6 @@ void Estimator::optimization()
 
 void Estimator::slideWindow()
 {
-    TicToc t_margin;
     if (marginalization_flag == MARGIN_OLD)
     {
         double t_0 = Headers[0].stamp.toSec();
@@ -1042,24 +1037,22 @@ void Estimator::slideWindow()
             linear_acceleration_buf[WINDOW_SIZE].clear();
             angular_velocity_buf[WINDOW_SIZE].clear();
 
-            if (true || solver_flag == INITIAL)
-            {
-                map<double, ImageFrame>::iterator it_0;
-                it_0 = all_image_frame.find(t_0);
+            map<double, ImageFrame>::iterator it_0;
+            it_0 = all_image_frame.find(t_0);
+            if(it_0->second.pre_integration != nullptr)
                 delete it_0->second.pre_integration;
-                it_0->second.pre_integration = nullptr;
- 
-                for (map<double, ImageFrame>::iterator it = all_image_frame.begin(); it != it_0; ++it)
-                {
-                    if (it->second.pre_integration)
-                        delete it->second.pre_integration;
-                    it->second.pre_integration = NULL;
-                }
+            it_0->second.pre_integration = nullptr;
 
-                all_image_frame.erase(all_image_frame.begin(), it_0);
-                all_image_frame.erase(t_0);
-
+            for (map<double, ImageFrame>::iterator it = all_image_frame.begin(); it != it_0; ++it)
+            {
+                if (it->second.pre_integration != nullptr)
+                    delete it->second.pre_integration;
+                it->second.pre_integration = nullptr;
             }
+
+            all_image_frame.erase(all_image_frame.begin(), it_0);
+            all_image_frame.erase(t_0);
+
             slideWindowOld();
         }
     }
