@@ -58,7 +58,7 @@ void predict(const sensor_msgs::ImuConstPtr &imu_msg)
     double dt = t - latest_time;
     if (dt <= 0)
     {
-        ROS_WARN("Non-positive time interval detected: dt = %f", dt);
+        if (dt < 0) ROS_WARN("negative time interval detected: dt = %f", dt);
         return;
     }
     latest_time = t;
