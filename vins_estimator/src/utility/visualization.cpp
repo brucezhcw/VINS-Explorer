@@ -4,7 +4,7 @@ using namespace ros;
 using namespace Eigen;
 ros::Publisher pub_odometry, pub_latest_odometry;
 ros::Publisher pub_path, pub_relo_path;
-ros::Publisher pub_point_cloud, pub_margin_cloud;
+ros::Publisher pub_point_cloud, pub_margin_cloud,pub_point_3D;
 ros::Publisher pub_key_poses;
 ros::Publisher pub_relo_relative_pose;
 ros::Publisher pub_camera_pose;
@@ -27,6 +27,7 @@ void registerPub(ros::NodeHandle &n)
     pub_relo_path = n.advertise<nav_msgs::Path>("relocalization_path", 1000);
     pub_odometry = n.advertise<nav_msgs::Odometry>("odometry", 1000);
     pub_point_cloud = n.advertise<sensor_msgs::PointCloud>("point_cloud", 1000);
+    pub_point_3D = n.advertise<sensor_msgs::PointCloud>("point_3D", 1000);
     pub_margin_cloud = n.advertise<sensor_msgs::PointCloud>("history_cloud", 1000);
     pub_key_poses = n.advertise<visualization_msgs::Marker>("key_poses", 1000);
     pub_camera_pose = n.advertise<nav_msgs::Odometry>("camera_pose", 1000);
@@ -42,7 +43,8 @@ void registerPub(ros::NodeHandle &n)
     keyframebasevisual.setLineWidth(0.01);
 }
 
-void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, const std_msgs::Header &header)
+void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, const Eigen::VectorXd &sqrt_cov,
+                    const int last_track_num, const double latest_image_time, const int solver_flag, const std_msgs::Header &header)
 {
     Eigen::Quaterniond quadrotor_Q = Q ;
 
@@ -59,6 +61,12 @@ void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, co
     odometry.twist.twist.linear.x = V.x();
     odometry.twist.twist.linear.y = V.y();
     odometry.twist.twist.linear.z = V.z();
+
+    for (int i = 0; i < 15; i++)
+        odometry.pose.covariance[i] = sqrt_cov[i];
+    odometry.twist.twist.angular.x = last_track_num;
+    odometry.twist.twist.angular.y = latest_image_time;
+    odometry.twist.twist.angular.z = solver_flag;
     pub_latest_odometry.publish(odometry);
 }
 
@@ -66,9 +74,8 @@ void printStatistics(const Estimator &estimator, double t)
 {
     if (estimator.solver_flag != Estimator::SolverFlag::NON_LINEAR)
         return;
-    printf("position: %f, %f, %f\r", estimator.Ps[WINDOW_SIZE].x(), estimator.Ps[WINDOW_SIZE].y(), estimator.Ps[WINDOW_SIZE].z());
     ROS_DEBUG_STREAM("position: " << estimator.Ps[WINDOW_SIZE].transpose());
-    ROS_DEBUG_STREAM("orientation: " << estimator.Vs[WINDOW_SIZE].transpose());
+    ROS_DEBUG_STREAM("velocity: " << estimator.Vs[WINDOW_SIZE].transpose());
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         //ROS_DEBUG("calibration result for camera %d", i);
@@ -236,6 +243,47 @@ void pubCameraPose(const Estimator &estimator, const std_msgs::Header &header)
     }
 }
 
+void pubPoint3D(const Estimator &estimator)
+{ /* 发布当前帧成功三角化的3D点 */
+    if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
+    {
+        sensor_msgs::PointCloud point_3D;
+        point_3D.header = estimator.Headers[WINDOW_SIZE - 1];
+        for (auto &it_per_id : estimator.f_manager.feature)
+        {
+            int used_num = it_per_id.feature_per_frame.size();
+            if (!(used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 1))
+                continue;
+            if(it_per_id.start_frame + used_num - 1 >= WINDOW_SIZE - 1 && it_per_id.solve_flag == 1)
+            {
+                int imu_i = it_per_id.start_frame;
+                Vector3d pts_i = it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth;
+                Vector3d w_pts_i = estimator.Rs[imu_i] * (estimator.ric[0] * pts_i + estimator.tic[0])
+                                      + estimator.Ps[imu_i];
+                geometry_msgs::Point32 p;
+                p.x = w_pts_i(0);
+                p.y = w_pts_i(1);
+                p.z = w_pts_i(2);
+                point_3D.points.push_back(p);
+
+                sensor_msgs::ChannelFloat32 p_id;
+                p_id.values.push_back(it_per_id.feature_id);
+                point_3D.channels.push_back(p_id);
+            }
+        }
+        sensor_msgs::ChannelFloat32 imu_T_cam;
+        imu_T_cam.values.push_back(estimator.tic[0].x());
+        imu_T_cam.values.push_back(estimator.tic[0].y());
+        imu_T_cam.values.push_back(estimator.tic[0].z());
+        Quaterniond q{estimator.ric[0]};
+        imu_T_cam.values.push_back(q.w());
+        imu_T_cam.values.push_back(q.x());
+        imu_T_cam.values.push_back(q.y());
+        imu_T_cam.values.push_back(q.z());
+        point_3D.channels.push_back(imu_T_cam);
+        pub_point_3D.publish(point_3D);
+    }
+}
 
 void pubPointCloud(const Estimator &estimator, const std_msgs::Header &header)
 {

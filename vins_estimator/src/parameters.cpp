@@ -85,7 +85,7 @@ void readParameters(ros::NodeHandle &n)
         EX_CALIB_RESULT_PATH = OUTPUT_PATH + "/extrinsic_parameter.csv";
 
     }
-    else 
+    else
     {
         if ( ESTIMATE_EXTRINSIC == 1)
         {
@@ -103,13 +103,14 @@ void readParameters(ros::NodeHandle &n)
         cv::cv2eigen(cv_R, eigen_R);
         cv::cv2eigen(cv_T, eigen_T);
         Eigen::Quaterniond Q(eigen_R);
-        eigen_R = Q.normalized();
+        Q.normalize();
+        eigen_R = Q;
         RIC.push_back(eigen_R);
         TIC.push_back(eigen_T);
+        ROS_INFO("Extrinsic_Q: %.4f %.4f %.4f %.4f", Q.w(), Q.x(), Q.y(), Q.z());
         ROS_INFO_STREAM("Extrinsic_R : " << std::endl << RIC[0]);
         ROS_INFO_STREAM("Extrinsic_T : " << std::endl << TIC[0].transpose());
-        
-    } 
+    }
 
     INIT_DEPTH = 5.0;
     BIAS_ACC_THRESHOLD = 0.1;

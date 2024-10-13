@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <iostream>
 #include <queue>
+#include <vector>
 #include <execinfo.h>
 #include <csignal>
 
@@ -30,7 +31,7 @@ class FeatureTracker
   public:
     FeatureTracker();
 
-    void readImage(const cv::Mat &_img,double _cur_time);
+    void readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, double _cur_time);
 
     void setMask();
 
@@ -48,10 +49,10 @@ class FeatureTracker
 
     cv::Mat mask;
     cv::Mat fisheye_mask;
-    cv::Mat prev_img, cur_img, forw_img;
+    cv::Mat cur_img, forw_img;
     vector<cv::Point2f> n_pts;
-    vector<cv::Point2f> prev_pts, cur_pts, forw_pts;
-    vector<cv::Point2f> prev_un_pts, cur_un_pts;
+    vector<cv::Point2f> cur_pts, forw_pts;
+    vector<cv::Point2f> cur_un_pts;
     vector<cv::Point2f> pts_velocity;
     vector<int> ids;
     vector<int> track_cnt;

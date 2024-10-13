@@ -17,6 +17,7 @@ void Estimator::setParameter()
     ProjectionFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionTdFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     td = TD;
+    covariance = Eigen::Matrix<double, 15, 15>::Zero();
 }
 
 void Estimator::clearState()
@@ -117,17 +118,16 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
 
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header)
 {
-    ROS_DEBUG("new image coming ------------------------------------------");
-    ROS_DEBUG("Adding feature points %lu", image.size());
+    ROS_INFO("new image coming %.3f", header.stamp.toSec());
+    ROS_INFO("Adding feature points %lu", image.size());
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
         marginalization_flag = MARGIN_OLD;
     else
         marginalization_flag = MARGIN_SECOND_NEW;
 
-    ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
-    ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
-    ROS_DEBUG("Solving %d", frame_count);
-    ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
+    ROS_INFO("this frame is %s", marginalization_flag ? "Non-keyframe" : "Keyframe");
+    ROS_INFO("Solving %d", frame_count);
+    ROS_INFO("number of feature: %d", f_manager.getFeatureCount());
     Headers[frame_count] = header;
 
     ImageFrame imageframe(image, header.stamp.toSec());
@@ -695,6 +695,11 @@ void Estimator::optimization()
 
     TicToc t_whole, t_prepare;
     vector2double();
+    if (solver_flag == Estimator::SolverFlag::NON_LINEAR)
+        ROS_INFO("before optimization: %8.3f, %8.3f, %8.3f bgs: %9.6f, %9.6f, %9.6f bas: %9.6f, %9.6f, %9.6f", 
+                        Ps[WINDOW_SIZE].x(), Ps[WINDOW_SIZE].y(), Ps[WINDOW_SIZE].z(),
+                        Bgs[WINDOW_SIZE].x(), Bgs[WINDOW_SIZE].y(), Bgs[WINDOW_SIZE].z(),
+                        Bas[WINDOW_SIZE].x(), Bas[WINDOW_SIZE].y(), Bas[WINDOW_SIZE].z());
 
     if (last_marginalization_info)
     {
@@ -817,7 +822,11 @@ void Estimator::optimization()
     ROS_DEBUG("solver costs: %f", t_solver.toc());
 
     double2vector();
-
+    if (solver_flag == Estimator::SolverFlag::NON_LINEAR)
+        ROS_INFO("after  optimization: %8.3f, %8.3f, %8.3f bgs: %9.6f, %9.6f, %9.6f bas: %9.6f, %9.6f, %9.6f", 
+                        Ps[WINDOW_SIZE].x(), Ps[WINDOW_SIZE].y(), Ps[WINDOW_SIZE].z(),
+                        Bgs[WINDOW_SIZE].x(), Bgs[WINDOW_SIZE].y(), Bgs[WINDOW_SIZE].z(),
+                        Bas[WINDOW_SIZE].x(), Bas[WINDOW_SIZE].y(), Bas[WINDOW_SIZE].z());
     TicToc t_whole_marginalization;
     if (marginalization_flag == MARGIN_OLD)
     {

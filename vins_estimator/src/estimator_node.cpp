@@ -28,6 +28,7 @@ std::mutex i_buf;
 std::mutex m_estimator;
 
 double latest_time;
+double latest_image_time=-1;
 Eigen::Vector3d tmp_P;
 Eigen::Quaterniond tmp_Q;
 Eigen::Vector3d tmp_V;
@@ -84,14 +85,47 @@ void predict(const sensor_msgs::ImuConstPtr &imu_msg)
     tmp_P = tmp_P + dt * tmp_V + 0.5 * dt * dt * un_acc;
     tmp_V = tmp_V + dt * un_acc;
 
+    {/* Covariance of the error-state. (P V Q Ba Bg) */
+        TicToc t_predict;
+        Vector3d w_x = gyr_0 - tmp_Bg;
+        Vector3d a_x = acc_0 - tmp_Ba;
+        Matrix3d R_w_x, R_a_x;
+
+        R_w_x<<0, -w_x(2), w_x(1),
+                w_x(2), 0, -w_x(0),
+                -w_x(1), w_x(0), 0;
+        R_a_x<<0, -a_x(2), a_x(1),
+                a_x(2), 0, -a_x(0),
+                -a_x(1), a_x(0), 0;
+
+        Eigen::Matrix<double, 15, 15> F = Eigen::Matrix<double, 15, 15>::Identity();
+        F.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity() * dt;
+        F.block<3, 3>(3, 6) = -1.0 * tmp_Q.toRotationMatrix() * R_a_x * dt;
+        F.block<3, 3>(3, 9) = -1.0 * tmp_Q.toRotationMatrix() * dt;
+        F.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() - R_w_x * dt;
+        F.block<3, 3>(6, 12) = -1.0 * Eigen::Matrix3d::Identity() * dt;
+
+        Eigen::Matrix<double, 15, 12> V = Eigen::Matrix<double, 15, 12>::Zero();
+        V.block<12, 12>(3, 0) = Eigen::Matrix<double, 12, 12>::Identity();
+
+        Eigen::Matrix<double, 12, 12> Qi = Eigen::Matrix<double, 12, 12>::Zero();
+        Qi.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * ACC_N * dt*dt;
+        Qi.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * GYR_N * dt*dt;
+        Qi.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * ACC_W * dt;
+        Qi.block<3, 3>(9, 9) = Eigen::Matrix3d::Identity() * GYR_W * dt;
+
+        estimator.covariance = F * estimator.covariance * F.transpose() + V * Qi * V.transpose();
+        ROS_DEBUG("predict Covariance time: %f", t_predict.toc());
+    }
+
     acc_0 = linear_acceleration;
     gyr_0 = angular_velocity;
 }
 
 void update()
 {
-    TicToc t_predict;
     latest_time = current_time;
+    latest_image_time = current_time;
     tmp_P = estimator.Ps[WINDOW_SIZE];
     tmp_Q = estimator.Rs[WINDOW_SIZE];
     tmp_V = estimator.Vs[WINDOW_SIZE];
@@ -99,6 +133,7 @@ void update()
     tmp_Bg = estimator.Bgs[WINDOW_SIZE];
     acc_0 = estimator.acc_0;
     gyr_0 = estimator.gyr_0;
+    estimator.covariance = Eigen::Matrix<double, 15, 15>::Zero();
 
     queue<sensor_msgs::ImuConstPtr> tmp_imu_buf = imu_buf;
     for (sensor_msgs::ImuConstPtr tmp_imu_msg; !tmp_imu_buf.empty(); tmp_imu_buf.pop())
@@ -164,8 +199,14 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
         predict(imu_msg);
         std_msgs::Header header = imu_msg->header;
         header.frame_id = "world";
+        VectorXd sqrt_cov = estimator.covariance.diagonal().cwiseSqrt();
+        int solver_flag;
         if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
-            pubLatestOdometry(tmp_P, tmp_Q, tmp_V, header);
+            solver_flag = 1;
+        else
+            solver_flag = 0;
+
+        pubLatestOdometry(tmp_P, tmp_Q, tmp_V, sqrt_cov, estimator.f_manager.last_track_num, latest_image_time, solver_flag, header);
     }
 }
 
@@ -331,6 +372,7 @@ void process()
             pubCameraPose(estimator, header);
             pubPointCloud(estimator, header);
             pubTF(estimator, header);
+            pubPoint3D(estimator);
             pubKeyframe(estimator);
             if (relo_msg != NULL)
                 pubRelocalization(estimator);

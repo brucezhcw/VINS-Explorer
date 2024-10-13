@@ -1,5 +1,7 @@
 #include "feature_tracker.h"
 
+#define SQR(x) ((x)*(x))
+
 int FeatureTracker::n_id = 0;
 
 bool inBorder(const cv::Point2f &pt)
@@ -78,7 +80,7 @@ void FeatureTracker::addPoints()
     }
 }
 
-void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
+void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, double _cur_time)
 {
     cv::Mat img;
     cur_time = _cur_time;
@@ -95,7 +97,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
 
     if (forw_img.empty())
     {
-        prev_img = cur_img = forw_img = img;
+        cur_img = forw_img = img;
     }
     else
     {
@@ -103,24 +105,94 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     }
 
     forw_pts.clear();
-
     if (cur_pts.size() > 0)
     {
         TicToc t_o;
+        float ave_distance=0;
         vector<uchar> status;
         vector<float> err;
-        cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3);
+        std::vector<int> ids_3D;
+        vector<cv::Point2f> cur_pts_3D, forw_pts_3D, forw_pts_3D_origin;
+        forw_pts = cur_pts;
+        if (id_points.size() > 0)
+        { /* 先跟踪3D点 */
+            Eigen::Vector2d local_uv;
+            map<int, Vector3d>::iterator it;
+            for (int i = 0; i < int(cur_pts.size()); i++)
+            {
+                it = id_points.find(ids[i]);
+                if(it != id_points.end())
+                {
+                    m_camera->spaceToPlane(it->second, local_uv);
+                    cv::Point2f uv_tmp(local_uv.x(), local_uv.y());
+                    if (inBorder(uv_tmp))
+                    {
+                        ids_3D.push_back(ids[i]);
+                        cur_pts_3D.push_back(cur_pts[i]);
+                        forw_pts_3D.push_back(uv_tmp);
+                    }
+                }
+            }
+            if (forw_pts_3D.size() > 0)
+            {
+                forw_pts_3D_origin = forw_pts_3D;
+                cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts_3D, forw_pts_3D, status, err, cv::Size(21, 21), 1,
+                                cv::TermCriteria((cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 30, (0.01)),
+                                cv::OPTFLOW_USE_INITIAL_FLOW + cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
+                for (int i = 0; i < int(forw_pts_3D.size()); i++)
+                    if (status[i] && !inBorder(forw_pts_3D[i]))
+                        status[i] = 0;
+                reduceVector(forw_pts_3D_origin, status);
+                reduceVector(cur_pts_3D, status);
+                reduceVector(forw_pts_3D, status);
+                reduceVector(ids_3D, status);
+                for (int i = 0; i < int(forw_pts_3D.size()); i++)
+                {
+                    ave_distance += std::sqrt(SQR(forw_pts_3D[i].x - forw_pts_3D_origin[i].x)+SQR(forw_pts_3D[i].y - forw_pts_3D_origin[i].y));
+                }
+                if (forw_pts_3D.size()>0) ave_distance /= forw_pts_3D.size();
+                ROS_INFO("3D point tracked: %d, ave_distance: %.3fpixel", int(forw_pts_3D.size()), ave_distance);
 
+                for (int i = 0; i < int(forw_pts_3D.size()); i++)
+                    for (int j = 0; j < int(ids.size()); j++)
+                    {
+                        if (ids_3D[i] == ids[j])
+                            forw_pts[j] = forw_pts_3D[i];
+                    }
+            }
+        }
+        /* 然后跟踪所有点 */
+        cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3,
+                                cv::TermCriteria((cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 30, (0.01)),
+                                cv::OPTFLOW_USE_INITIAL_FLOW + cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
         for (int i = 0; i < int(forw_pts.size()); i++)
             if (status[i] && !inBorder(forw_pts[i]))
                 status[i] = 0;
-        reduceVector(prev_pts, status);
+        /* 3D跟踪结果替换 2D-3D跟踪结果 */
+        if (forw_pts_3D.size() > 0)
+        {
+            int cnt = 0;
+            ave_distance = 0;
+            for (int i = 0; i < int(forw_pts_3D.size()); i++)
+                for (int j = 0; j < int(ids.size()); j++)
+                {
+                    if (ids_3D[i] == ids[j])
+                    {
+                        cnt++;
+                        ave_distance += std::sqrt(SQR(forw_pts_3D[i].x - forw_pts[j].x)+SQR(forw_pts_3D[i].y - forw_pts[j].y));
+                        status[j] = 1;
+                        forw_pts[j] = forw_pts_3D[i];
+                    }
+                }
+            if (cnt > 0) ave_distance /= cnt;
+            ROS_INFO("3D point retracked: %d, ave_distance: %.3fpixel", cnt, ave_distance);
+        }
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
         reduceVector(ids, status);
         reduceVector(cur_un_pts, status);
         reduceVector(track_cnt, status);
-        ROS_DEBUG("temporal optical flow costs: %fms", t_o.toc());
+        ROS_INFO("temporal optical flow costs: %fms", t_o.toc());
     }
 
     for (auto &n : track_cnt)
@@ -156,9 +228,6 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         addPoints();
         ROS_DEBUG("selectFeature costs: %fms", t_a.toc());
     }
-    prev_img = cur_img;
-    prev_pts = cur_pts;
-    prev_un_pts = cur_un_pts;
     cur_img = forw_img;
     cur_pts = forw_pts;
     undistortedPoints();
@@ -189,7 +258,6 @@ void FeatureTracker::rejectWithF()
         vector<uchar> status;
         cv::findFundamentalMat(un_cur_pts, un_forw_pts, cv::FM_RANSAC, F_THRESHOLD, 0.99, status);
         int size_a = cur_pts.size();
-        reduceVector(prev_pts, status);
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
         reduceVector(cur_un_pts, status);
