@@ -1,3 +1,8 @@
+# VINS-Explorer: 基于VINS-Mono, 进行一些算法、工程上的精度、鲁棒性等指标的优化方法探索，偏重于视觉信息和惯性信息的深度融合
+
+**2024年10月13日**：实现了一个初步版本：基于IMU递推位姿进行已经完成深度估计的3D点在第二帧图像中的投影，将其作为初值用于光流跟踪
+如有参照，请注明出处，谢谢：https://github.com/brucezhcw/VINS-Explorer
+
 # VINS-Mono
 ## A Robust and Versatile Monocular Visual-Inertial State Estimator
 
