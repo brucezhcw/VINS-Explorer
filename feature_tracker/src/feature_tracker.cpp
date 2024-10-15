@@ -12,6 +12,13 @@ bool inBorder(const cv::Point2f &pt)
     return BORDER_SIZE <= img_x && img_x < COL - BORDER_SIZE && BORDER_SIZE <= img_y && img_y < ROW - BORDER_SIZE;
 }
 
+float distance(cv::Point2f &pt1, cv::Point2f &pt2)
+{
+    float dx = pt1.x - pt2.x;
+    float dy = pt1.y - pt2.y;
+    return sqrt(dx * dx + dy * dy);
+}
+
 void reduceVector(vector<cv::Point2f> &v, vector<uchar> status)
 {
     int j = 0;
@@ -137,8 +144,8 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
             {
                 forw_pts_3D_origin = forw_pts_3D;
                 cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts_3D, forw_pts_3D, status, err, cv::Size(21, 21), 1,
-                                cv::TermCriteria((cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 30, (0.01)),
-                                cv::OPTFLOW_USE_INITIAL_FLOW + cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
+                                cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01),
+                                cv::OPTFLOW_USE_INITIAL_FLOW);
                 for (int i = 0; i < int(forw_pts_3D.size()); i++)
                     if (status[i] && !inBorder(forw_pts_3D[i]))
                         status[i] = 0;
@@ -163,8 +170,24 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
         }
         /* 然后跟踪所有点 */
         cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3,
-                                cv::TermCriteria((cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 30, (0.01)),
-                                cv::OPTFLOW_USE_INITIAL_FLOW + cv::OPTFLOW_LK_GET_MIN_EIGENVALS);
+                                cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01),
+                                cv::OPTFLOW_USE_INITIAL_FLOW);
+        { /* 反向跟踪 */
+            vector<uchar> reverse_status;
+            vector<cv::Point2f> reverse_pts = cur_pts;
+            cv::calcOpticalFlowPyrLK(forw_img, cur_img, forw_pts, reverse_pts, reverse_status, err, cv::Size(21, 21), 1, 
+                                    cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01),
+                                    cv::OPTFLOW_USE_INITIAL_FLOW);
+            for(size_t i = 0; i < status.size(); i++)
+            {
+                if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 1.0)
+                {
+                    status[i] = 1;
+                }
+                else
+                    status[i] = 0;
+            }
+        }
         for (int i = 0; i < int(forw_pts.size()); i++)
             if (status[i] && !inBorder(forw_pts[i]))
                 status[i] = 0;

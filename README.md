@@ -3,6 +3,12 @@
 **2024年10月13日**：实现了一个初步版本：基于IMU递推位姿进行已经完成深度估计的3D点在第二帧图像中的投影，将其作为初值用于光流跟踪
 如有参照，请注明出处，谢谢：https://github.com/brucezhcw/VINS-Explorer
 
+**测试环境**：i7-10870H CPU@2.20GHZ
+Windows11 WSL2
+Ubuntu 20.04.6LTS
+ROS-noetic
+Ceres1.14.0  OpenCV4.2.0  Eigen3.3.7
+
 # VINS-Mono
 ## A Robust and Versatile Monocular Visual-Inertial State Estimator
 
