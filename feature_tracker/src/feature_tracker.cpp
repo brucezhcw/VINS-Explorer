@@ -180,7 +180,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
                                     cv::OPTFLOW_USE_INITIAL_FLOW);
             for(size_t i = 0; i < status.size(); i++)
             {
-                if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 1.0)
+                if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 0.5)
                 {
                     status[i] = 1;
                 }
