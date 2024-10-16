@@ -12,6 +12,9 @@ Ubuntu 20.04.6LTS
 ROS-noetic
 Ceres1.14.0  OpenCV4.2.0  Eigen3.3.7
 
+**What does VINS-Explorer do based on VINS-Mono?**
+![VINS-Explorer.png](https://github.com/brucezhcw/VINS-Explorer/tree/develop/support_files/image/VINS-Explorer.png)
+
 # VINS-Mono
 ## A Robust and Versatile Monocular Visual-Inertial State Estimator
 
