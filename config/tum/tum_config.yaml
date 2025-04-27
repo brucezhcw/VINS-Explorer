@@ -52,8 +52,8 @@ equalize: 1             # if image is too dark or light, trun on equalize to fin
 fisheye: 1              # if using fisheye, trun on it. A circle mask will be loaded to remove edge noisy points
 
 #optimization parameters
-max_solver_time: 0.04  # max solver itration time (ms), to guarantee real time
-max_num_iterations: 8   # max solver itrations, to guarantee real time
+max_solver_time: 0.04   # max solver itration time (ms), to guarantee real time
+max_num_iterations: 10  # max solver itrations, to guarantee real time
 keyframe_parallax: 10.0 # keyframe selection threshold (pixel)
 
 #imu parameters       The more accurate parameters you provide, the better performance

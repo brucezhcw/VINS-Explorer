@@ -115,7 +115,7 @@ void predict(const sensor_msgs::ImuConstPtr &imu_msg)
         Qi.block<3, 3>(9, 9) = Eigen::Matrix3d::Identity() * GYR_W * dt;
 
         estimator.covariance = F * estimator.covariance * F.transpose() + V * Qi * V.transpose();
-        ROS_DEBUG("predict Covariance time: %f", t_predict.toc());
+        //ROS_DEBUG("predict Covariance time: %f", t_predict.toc());
     }
 
     acc_0 = linear_acceleration;
@@ -392,7 +392,7 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "vins_estimator");
     ros::NodeHandle n("~");
-    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug);
     readParameters(n);
     estimator.setParameter();
 #ifdef EIGEN_DONT_PARALLELIZE

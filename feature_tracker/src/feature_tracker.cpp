@@ -51,28 +51,30 @@ void FeatureTracker::setMask()
     
 
     // prefer to keep features that are tracked for long time
-    vector<pair<int, pair<cv::Point2f, int>>> cnt_pts_id;
+    vector<pair<int, pair<pair<cv::Point2f, cv::Point2f>, int>>> cnt_pts_id;
 
     for (unsigned int i = 0; i < forw_pts.size(); i++)
-        cnt_pts_id.push_back(make_pair(track_cnt[i], make_pair(forw_pts[i], ids[i])));
+        cnt_pts_id.push_back(make_pair(track_cnt[i], make_pair(make_pair(cur_pts[i], forw_pts[i]), ids[i])));
 
-    sort(cnt_pts_id.begin(), cnt_pts_id.end(), [](const pair<int, pair<cv::Point2f, int>> &a, const pair<int, pair<cv::Point2f, int>> &b)
+    sort(cnt_pts_id.begin(), cnt_pts_id.end(), [](const pair<int, pair<pair<cv::Point2f, cv::Point2f>, int>> &a, const pair<int, pair<pair<cv::Point2f, cv::Point2f>, int>> &b)
          {
             return a.first > b.first;
          });
 
+    cur_pts.clear();
     forw_pts.clear();
     ids.clear();
     track_cnt.clear();
 
     for (auto &it : cnt_pts_id)
     {
-        if (mask.at<uchar>(it.second.first) == 255)
+        if (mask.at<uchar>(it.second.first.second) == 255)
         {
-            forw_pts.push_back(it.second.first);
+            cur_pts.push_back(it.second.first.first);
+            forw_pts.push_back(it.second.first.second);
             ids.push_back(it.second.second);
             track_cnt.push_back(it.first);
-            cv::circle(mask, it.second.first, MIN_DIST, 0, -1);
+            cv::circle(mask, it.second.first.second, MIN_DIST, 0, -1);
         }
     }
 }
@@ -90,6 +92,9 @@ void FeatureTracker::addPoints()
 void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, double _cur_time)
 {
     cv::Mat img;
+    vector<size_t> index_3D;
+    vector<cv::Point2f> pts_3D;
+    
     cur_time = _cur_time;
 
     if (EQUALIZE)
@@ -115,6 +120,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
     if (cur_pts.size() > 0)
     {
         TicToc t_o;
+        float distance_3D = 0;
         vector<uchar> status;
         vector<float> err;
         forw_pts = cur_pts;
@@ -132,33 +138,96 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
                     if (inBorder(uv_tmp))
                     {
                         forw_pts[i] = uv_tmp;
+                        index_3D.push_back(i);
+                        pts_3D.push_back(uv_tmp);
+                        float dis = distance(cur_pts[i], forw_pts[i]);
+                        if(dis > distance_3D) distance_3D = dis;
                     }
                 }
             }
         }
         /* 然后跟踪所有点 */
-        cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3,
+        cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(11, 11), 3,
                                 cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01),
                                 cv::OPTFLOW_USE_INITIAL_FLOW);
         { /* 反向跟踪 */
+            int n_good = 0, n_bad=  0;
+            float err_limit = 30.0;
+            vector<float> sorted_err;
             vector<uchar> reverse_status;
             vector<cv::Point2f> reverse_pts = cur_pts;
-            cv::calcOpticalFlowPyrLK(forw_img, cur_img, forw_pts, reverse_pts, reverse_status, err, cv::Size(21, 21), 1, 
+            cv::calcOpticalFlowPyrLK(forw_img, cur_img, forw_pts, reverse_pts, reverse_status, err, cv::Size(11, 11), 1, 
                                     cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01),
                                     cv::OPTFLOW_USE_INITIAL_FLOW);
             for(size_t i = 0; i < status.size(); i++)
             {
                 if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 0.5)
                 {
-                    status[i] = 1;
+                    sorted_err.push_back(distance(cur_pts[i], forw_pts[i]));
+                }
+            }
+            if(sorted_err.size() > 2)
+            {
+                std::sort(sorted_err.begin(), sorted_err.end());
+                err_limit = sorted_err[sorted_err.size()/2] * 2.0;
+            }
+            err_limit = err_limit < 0.5 ? 0.5 : err_limit;
+            err_limit = err_limit < distance_3D ? distance_3D + 0.1 : err_limit;
+            for(size_t i = 0; i < status.size(); i++)
+            {
+                if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 0.5)
+                {
+                    if(distance(cur_pts[i], forw_pts[i]) <= err_limit) {
+                        n_good++;
+                        status[i] = 1;
+                    } else {
+                        n_bad++;
+                        status[i] = 0;
+                    }
                 }
                 else
                     status[i] = 0;
             }
+            ROS_INFO("tracking: %5.2f %5.2f, %d %d", err_limit, distance_3D, n_good, n_bad);
         }
-        for (int i = 0; i < int(forw_pts.size()); i++)
+        for (size_t i = 0; i < forw_pts.size(); i++)
             if (status[i] && !inBorder(forw_pts[i]))
                 status[i] = 0;
+        int tracked_3D = 0, tracked_good_3D = 0;
+        for (size_t i = 0; i < index_3D.size(); i++)
+            if(status[index_3D[i]])
+            {
+                tracked_3D++;
+                if(distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
+                    tracked_good_3D++;
+            }
+        ROS_INFO("3D point: %d, %d, %d", tracked_good_3D, tracked_3D, int(index_3D.size()));
+        if (PUB_THIS_FRAME)
+        {
+            int status_0 = 0;
+            for(size_t i = 0, j = 0; index_3D.size()>0 && i < forw_pts.size(); i++)
+            {
+                if(status[i] == 0)
+                {
+                    status_0++;
+                    if(index_3D[j] == i)
+                    {
+                        index_3D.erase(index_3D.begin() + j);
+                        pts_3D.erase(pts_3D.begin() + j);
+                    }
+                }
+                else
+                {
+                    if(index_3D[j] == i)
+                    {
+                        index_3D[j] -= status_0;
+                        j++;
+                        if(j >= index_3D.size())
+                            break;
+                    }
+                }
+            }
+        }
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
         reduceVector(ids, status);
@@ -172,7 +241,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
 
     if (PUB_THIS_FRAME)
     {
-        rejectWithF();
+        rejectWithF(index_3D, pts_3D);
         ROS_DEBUG("set mask begins");
         TicToc t_m;
         setMask();
@@ -201,12 +270,13 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
         ROS_DEBUG("selectFeature costs: %fms", t_a.toc());
     }
     cur_img = forw_img;
+    prev_pts = cur_pts;
     cur_pts = forw_pts;
     undistortedPoints();
     prev_time = cur_time;
 }
 
-void FeatureTracker::rejectWithF()
+void FeatureTracker::rejectWithF(std::vector<size_t> index_3D, std::vector<cv::Point2f> pts_3D)
 {
     if (forw_pts.size() >= 8)
     {
@@ -230,6 +300,15 @@ void FeatureTracker::rejectWithF()
         vector<uchar> status;
         cv::findFundamentalMat(un_cur_pts, un_forw_pts, cv::FM_RANSAC, F_THRESHOLD, 0.99, status);
         int size_a = cur_pts.size();
+        int tracked_3D = 0, tracked_good_3D = 0;
+        for (size_t i = 0; i < index_3D.size(); i++)
+            if(status[index_3D[i]])
+            {
+                tracked_3D++;
+                if(distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
+                    tracked_good_3D++;
+            }
+        ROS_DEBUG("3D point after FM ransac: %d, %d, %d", tracked_good_3D, tracked_3D, int(index_3D.size()));
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
         reduceVector(cur_un_pts, status);

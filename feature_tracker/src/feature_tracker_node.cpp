@@ -57,7 +57,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
 
 sensor_msgs::ImageConstPtr get_oneimage()
 {
-    double valid_time = 1.0/FREQ*0.5;
+    double valid_time = 1.0/FREQ;
     sensor_msgs::ImageConstPtr img_msg;
 
     if (imu_forward_buf.empty() || img_buf.empty())
@@ -95,15 +95,15 @@ sensor_msgs::ImageConstPtr get_oneimage()
                         break;
                 }
                 Eigen::Matrix<double, 15, 1> sqrt_cov;
-                for (int i = 0; i < 15; i++)
-                    sqrt_cov[i] = imu_forward_buf[i]->pose.covariance[i];
+                for (int k = 0; k < 15; k++)
+                    sqrt_cov[k] = imu_forward_buf[i]->pose.covariance[k];
                 int last_track_num = imu_forward_buf[i]->twist.twist.angular.x + 0.5;
                 double latest_image_time = imu_forward_buf[i]->twist.twist.angular.y;
                 int solver_flag = imu_forward_buf[i]->twist.twist.angular.z + 0.5;
                 std::ostringstream oss;
                 oss << std::fixed << std::setprecision(4);
-                for (int i = 0; i < sqrt_cov.size(); ++i) {
-                    oss << sqrt_cov(i) << " ";
+                for (int k = 0; k < sqrt_cov.size(); ++k) {
+                    oss << sqrt_cov(k) << " ";
                 }
                 ROS_INFO_STREAM("predicted IMU state sqrt_cov: " << oss.str());
                 ROS_INFO("solver_flag: %d, latest_image_time: %.3f, point: %d, dt: %.3f", solver_flag, latest_image_time, last_track_num, imu_forward_buf[i]->header.stamp.toSec()-latest_image_time);
@@ -160,7 +160,7 @@ sensor_msgs::ImageConstPtr get_oneimage()
 
         for (auto it = imu_forward_buf.begin(); it != imu_forward_buf.end(); )
         {
-            if (it->get()->header.stamp.toSec() < img_time - valid_time)
+            if (it->get()->header.stamp.toSec() < last_image_time)
                 it = imu_forward_buf.erase(it);
             else
                 break;
@@ -172,6 +172,7 @@ sensor_msgs::ImageConstPtr get_oneimage()
             else
                 break;
         }
+
         return img_msg;
     }
     else if (imu_forward_buf.front()->header.stamp.toSec() > img_buf.front()->header.stamp.toSec())
@@ -180,7 +181,7 @@ sensor_msgs::ImageConstPtr get_oneimage()
         img_buf.pop();
         for (auto it = point_3D_buf.begin(); it != point_3D_buf.end(); )
         {
-            if (it->get()->header.stamp.toSec() < img_msg->header.stamp.toSec() - valid_time*5)
+            if (it->get()->header.stamp.toSec() < last_image_time)
                 it = point_3D_buf.erase(it);
             else
                 break;
@@ -200,7 +201,7 @@ void process()
         con.wait(lk, [&]
                  {
             return (img_msg = get_oneimage()) != nullptr;
-                 });
+                });
         lk.unlock();
         if(img_msg == nullptr)
             continue;
@@ -353,24 +354,33 @@ void process()
                     cv::Mat tmp_img = stereo_img.rowRange(i * ROW, (i + 1) * ROW);
                     cv::cvtColor(show_img, tmp_img, CV_GRAY2RGB);
 
+                    map<int, Vector3d>::iterator it;
                     for (unsigned int j = 0; j < trackerData[i].cur_pts.size(); j++)
                     {
-                        double len = std::min(1.0, 1.0 * trackerData[i].track_cnt[j] / WINDOW_SIZE);
-                        cv::circle(tmp_img, trackerData[i].cur_pts[j], 2, cv::Scalar(255 * (1 - len), 0, 255 * len), 2);
-                        //draw speed line
-                        /*
-                        Vector2d tmp_cur_un_pts (trackerData[i].cur_un_pts[j].x, trackerData[i].cur_un_pts[j].y);
-                        Vector2d tmp_pts_velocity (trackerData[i].pts_velocity[j].x, trackerData[i].pts_velocity[j].y);
-                        Vector3d tmp_prev_un_pts;
-                        tmp_prev_un_pts.head(2) = tmp_cur_un_pts - 0.10 * tmp_pts_velocity;
-                        tmp_prev_un_pts.z() = 1;
-                        Vector2d tmp_prev_uv;
-                        trackerData[i].m_camera->spaceToPlane(tmp_prev_un_pts, tmp_prev_uv);
-                        cv::line(tmp_img, trackerData[i].cur_pts[j], cv::Point2f(tmp_prev_uv.x(), tmp_prev_uv.y()), cv::Scalar(255 , 0, 0), 1 , 8, 0);
-                        */
-                        //char name[10];
-                        //sprintf(name, "%d", trackerData[i].ids[j]);
-                        //cv::putText(tmp_img, name, trackerData[i].cur_pts[j], cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0));
+                        it = id_points.find(trackerData[i].ids[j]);
+                        if(it != id_points.end())
+                        {
+                            cv::circle(tmp_img, trackerData[i].cur_pts[j], 2, cv::Scalar(0, 255, 0), 2); //> 跟踪到的3D点
+                        }
+                        else
+                        {
+                            double len = std::min(1.0, 1.0 * trackerData[i].track_cnt[j] / WINDOW_SIZE);
+                            cv::circle(tmp_img, trackerData[i].cur_pts[j], 2, cv::Scalar(255 * (1 - len), 0, 255 * len), 2);
+                        }
+                    }
+
+                    //draw tracking line
+                    if (trackerData[i].prev_pts.size() > 0)
+                    {
+                        char name[32];
+                        sprintf(name, "%.3f", img_msg->header.stamp.toSec());
+                        cv::putText(tmp_img, name, cv::Point2f(10, 15), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255));
+                        for (unsigned int j = 0; j < trackerData[i].prev_pts.size(); j++)
+                        {
+                            if (trackerData[i].track_cnt[j] > 1)
+                                cv::line(tmp_img, trackerData[i].cur_pts[j], trackerData[i].prev_pts[j], cv::Scalar(255 , 0, 0), 1 , 8, 0);
+                        }
+                        //cv::imwrite(std::string("/home/brucezhcw/catkin_ws/output/tracking_image/") + std::string(name) + std::string(".png"), stereo_img);
                     }
                 }
                 //cv::imshow("vis", stereo_img);
@@ -386,7 +396,7 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "feature_tracker");
     ros::NodeHandle n("~");
-    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug);
     readParameters(n);
 
     for (int i = 0; i < NUM_OF_CAM; i++)

@@ -696,8 +696,10 @@ void Estimator::optimization()
     TicToc t_whole, t_prepare;
     vector2double();
     if (solver_flag == Estimator::SolverFlag::NON_LINEAR)
-        ROS_INFO("before optimization: %8.3f, %8.3f, %8.3f bgs: %9.6f, %9.6f, %9.6f bas: %9.6f, %9.6f, %9.6f", 
+        ROS_INFO("before optimization P: %8.3f, %8.3f, %8.3f V: %6.2f, %6.2f, %6.2f ypr: %6.2f, %6.2f, %6.2f bgs: %9.6f, %9.6f, %9.6f bas: %9.6f, %9.6f, %9.6f", 
                         Ps[WINDOW_SIZE].x(), Ps[WINDOW_SIZE].y(), Ps[WINDOW_SIZE].z(),
+                        Vs[WINDOW_SIZE].x(), Vs[WINDOW_SIZE].y(), Vs[WINDOW_SIZE].z(),
+                        Utility::R2ypr(Rs[WINDOW_SIZE]).x(), Utility::R2ypr(Rs[WINDOW_SIZE]).y(), Utility::R2ypr(Rs[WINDOW_SIZE]).z(),
                         Bgs[WINDOW_SIZE].x(), Bgs[WINDOW_SIZE].y(), Bgs[WINDOW_SIZE].z(),
                         Bas[WINDOW_SIZE].x(), Bas[WINDOW_SIZE].y(), Bas[WINDOW_SIZE].z());
 
@@ -805,8 +807,9 @@ void Estimator::optimization()
 
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
-    options.trust_region_strategy_type = ceres::DOGLEG;
+    options.trust_region_strategy_type = ceres::DOGLEG; //> ceres::LEVENBERG_MARQUARDT
     options.max_num_iterations = NUM_ITERATIONS;
+    options.function_tolerance = 1.e-3;     //> 达到精度要求即结束，否则会浪费大量的时间进行不必要的优化
     //options.use_explicit_schur_complement = true;
     //options.minimizer_progress_to_stdout = true;
     //options.use_nonmonotonic_steps = true;
@@ -817,14 +820,16 @@ void Estimator::optimization()
     TicToc t_solver;
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    //cout << summary.BriefReport() << endl;
+    cout << summary.BriefReport() << endl;
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
 
     double2vector();
     if (solver_flag == Estimator::SolverFlag::NON_LINEAR)
-        ROS_INFO("after  optimization: %8.3f, %8.3f, %8.3f bgs: %9.6f, %9.6f, %9.6f bas: %9.6f, %9.6f, %9.6f", 
+        ROS_INFO("after  optimization P: %8.3f, %8.3f, %8.3f V: %6.2f, %6.2f, %6.2f ypr: %6.2f, %6.2f, %6.2f bgs: %9.6f, %9.6f, %9.6f bas: %9.6f, %9.6f, %9.6f", 
                         Ps[WINDOW_SIZE].x(), Ps[WINDOW_SIZE].y(), Ps[WINDOW_SIZE].z(),
+                        Vs[WINDOW_SIZE].x(), Vs[WINDOW_SIZE].y(), Vs[WINDOW_SIZE].z(),
+                        Utility::R2ypr(Rs[WINDOW_SIZE]).x(), Utility::R2ypr(Rs[WINDOW_SIZE]).y(), Utility::R2ypr(Rs[WINDOW_SIZE]).z(),
                         Bgs[WINDOW_SIZE].x(), Bgs[WINDOW_SIZE].y(), Bgs[WINDOW_SIZE].z(),
                         Bas[WINDOW_SIZE].x(), Bas[WINDOW_SIZE].y(), Bas[WINDOW_SIZE].z());
     TicToc t_whole_marginalization;

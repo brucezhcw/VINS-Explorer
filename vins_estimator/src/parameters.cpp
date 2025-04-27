@@ -108,6 +108,7 @@ void readParameters(ros::NodeHandle &n)
         RIC.push_back(eigen_R);
         TIC.push_back(eigen_T);
         ROS_INFO("Extrinsic_Q: %.4f %.4f %.4f %.4f", Q.w(), Q.x(), Q.y(), Q.z());
+        ROS_INFO("Extrinsic_ypr: %.1f %.1f %.1f", Utility::R2ypr(RIC[0]).x(), Utility::R2ypr(RIC[0]).y(), Utility::R2ypr(RIC[0]).z());
         ROS_INFO_STREAM("Extrinsic_R : " << std::endl << RIC[0]);
         ROS_INFO_STREAM("Extrinsic_T : " << std::endl << TIC[0].transpose());
     }
