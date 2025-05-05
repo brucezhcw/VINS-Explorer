@@ -39,8 +39,8 @@ Debug;
 
 ## 未来工作
 
-Mono VIO算法持续优化：前端跟踪，有高精度IMU递推位姿、若干3D点投影前提下，rejectWithF() 的逻辑应当考虑利用高精度的位姿先验和3D点先验，不再是RANSAC算法 
-Mono VIO算法向Stereo VIO、线特征算法迁移测试 
+Mono VIO算法持续优化：前端告一段落，优化后端
+Mono VIO算法向Stereo VIO、线特征算法迁移测试
 
 ## 测试环境
 
