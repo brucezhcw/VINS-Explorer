@@ -43,8 +43,8 @@ void registerPub(ros::NodeHandle &n)
     keyframebasevisual.setLineWidth(0.01);
 }
 
-void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, const Eigen::VectorXd &sqrt_cov,
-                    const int last_track_num, const double latest_image_time, const int solver_flag, const std_msgs::Header &header)
+void pubLatestOdometry(const Estimator &estimator, const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V,
+                    const Eigen::VectorXd &sqrt_cov, const double latest_image_time, const int solver_flag, const std_msgs::Header &header)
 {
     Eigen::Quaterniond quadrotor_Q = Q ;
 
@@ -64,7 +64,15 @@ void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, co
 
     for (int i = 0; i < 15; i++)
         odometry.pose.covariance[i] = sqrt_cov[i];
-    odometry.twist.twist.angular.x = last_track_num;
+    odometry.pose.covariance[15] = estimator.tic[0].x();
+    odometry.pose.covariance[16] = estimator.tic[0].y();
+    odometry.pose.covariance[17] = estimator.tic[0].z();
+    Quaterniond q{estimator.ric[0]};
+    odometry.pose.covariance[18] = q.w();
+    odometry.pose.covariance[19] = q.x();
+    odometry.pose.covariance[20] = q.y();
+    odometry.pose.covariance[21] = q.z();
+    odometry.twist.twist.angular.x = estimator.f_manager.last_track_num;
     odometry.twist.twist.angular.y = latest_image_time;
     odometry.twist.twist.angular.z = solver_flag;
     pub_latest_odometry.publish(odometry);
@@ -269,16 +277,6 @@ void pubPoint3D(const Estimator &estimator)
                 point_3D.channels.push_back(p_id);
             }
         }
-        sensor_msgs::ChannelFloat32 imu_T_cam;
-        imu_T_cam.values.push_back(estimator.tic[0].x());
-        imu_T_cam.values.push_back(estimator.tic[0].y());
-        imu_T_cam.values.push_back(estimator.tic[0].z());
-        Quaterniond q{estimator.ric[0]};
-        imu_T_cam.values.push_back(q.w());
-        imu_T_cam.values.push_back(q.x());
-        imu_T_cam.values.push_back(q.y());
-        imu_T_cam.values.push_back(q.z());
-        point_3D.channels.push_back(imu_T_cam);
         pub_point_3D.publish(point_3D);
     }
 }

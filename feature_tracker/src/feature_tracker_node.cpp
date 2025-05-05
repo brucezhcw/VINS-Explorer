@@ -31,6 +31,8 @@ vector<sensor_msgs::PointCloud::ConstPtr> point_3D_buf;
 vector<nav_msgs::Odometry::ConstPtr> imu_forward_buf;
 queue<sensor_msgs::ImageConstPtr> img_buf;
 map<int, Vector3d> id_points;
+Eigen::Matrix3d vo_r_i;
+Eigen::Vector3d vo_t_i;
 
 void point_3D_callback(const sensor_msgs::PointCloud::ConstPtr &point_3D_msg)
 {
@@ -70,6 +72,73 @@ sensor_msgs::ImageConstPtr get_oneimage()
         img_msg = img_buf.front();
         img_buf.pop();
         double img_time = img_msg->header.stamp.toSec();
+        int last_track_num = 0;
+        double latest_image_time = 0;
+        int solver_flag = 0;
+        Eigen::Matrix<double, 15, 1> sqrt_cov;
+        int i = 0, j = imu_forward_buf.size() - 1;
+        for( ; i+1 <= j; i++)
+        {
+            if(imu_forward_buf[i+1]->header.stamp.toSec() > img_time)
+                break;
+        }
+        for( ; j-1 >= i; j--)
+        {
+            if(imu_forward_buf[j-1]->header.stamp.toSec() < img_time)
+                break;
+        }
+        
+        for (int k = 0; k < 15; k++)
+            sqrt_cov[k] = imu_forward_buf[i]->pose.covariance[k];
+        last_track_num = imu_forward_buf[i]->twist.twist.angular.x + 0.5;
+        latest_image_time = imu_forward_buf[i]->twist.twist.angular.y;
+        solver_flag = imu_forward_buf[i]->twist.twist.angular.z + 0.5;
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(4);
+        for (int k = 0; k < sqrt_cov.size(); ++k) {
+            oss << sqrt_cov(k) << " ";
+        }
+        ROS_INFO_STREAM("predicted IMU state sqrt_cov: " << oss.str());
+        ROS_INFO("solver_flag: %d, latest_image_time: %.3f, point: %d, dt: %.3f", solver_flag, latest_image_time, last_track_num, imu_forward_buf[i]->header.stamp.toSec()-latest_image_time);
+        double imu_time_i = imu_forward_buf[i]->header.stamp.toSec();
+        Vector3d vio_t_i(imu_forward_buf[i]->pose.pose.position.x, imu_forward_buf[i]->pose.pose.position.y, imu_forward_buf[i]->pose.pose.position.z);
+        Quaterniond vio_q_i;
+        vio_q_i.w() = imu_forward_buf[i]->pose.pose.orientation.w;
+        vio_q_i.x() = imu_forward_buf[i]->pose.pose.orientation.x;
+        vio_q_i.y() = imu_forward_buf[i]->pose.pose.orientation.y;
+        vio_q_i.z() = imu_forward_buf[i]->pose.pose.orientation.z;
+        if (i != j)
+        {
+            double imu_time_j = imu_forward_buf[j]->header.stamp.toSec();
+            Vector3d vio_t_j(imu_forward_buf[j]->pose.pose.position.x, imu_forward_buf[j]->pose.pose.position.y, imu_forward_buf[j]->pose.pose.position.z);
+            Quaterniond vio_q_j;
+            vio_q_j.w() = imu_forward_buf[j]->pose.pose.orientation.w;
+            vio_q_j.x() = imu_forward_buf[j]->pose.pose.orientation.x;
+            vio_q_j.y() = imu_forward_buf[j]->pose.pose.orientation.y;
+            vio_q_j.z() = imu_forward_buf[j]->pose.pose.orientation.z;
+
+            double t_ratio = (img_time - imu_time_i) / (imu_time_j - imu_time_i);
+            vio_t_i = vio_t_i *(1 - t_ratio) + vio_t_j * t_ratio;
+            vio_q_i = vio_q_i.slerp(t_ratio, vio_q_j);
+            vio_q_i.normalize();
+        }
+        Vector3d tic;
+        Quaterniond qic;
+        tic.x() = imu_forward_buf[i]->pose.covariance[15];
+        tic.y() = imu_forward_buf[i]->pose.covariance[16];
+        tic.z() = imu_forward_buf[i]->pose.covariance[17];
+        qic.w() = imu_forward_buf[i]->pose.covariance[18];
+        qic.x() = imu_forward_buf[i]->pose.covariance[19];
+        qic.y() = imu_forward_buf[i]->pose.covariance[20];
+        qic.z() = imu_forward_buf[i]->pose.covariance[21];
+        if(solver_flag==1 && sqrt_cov.head<3>().maxCoeff()<0.002 && sqrt_cov.segment<3>(6).maxCoeff()<0.004)
+        {
+            vo_r_i = vio_q_i.toRotationMatrix() * qic.toRotationMatrix();
+            vo_t_i = vio_t_i + vio_q_i.toRotationMatrix() * tic;
+        }
+        else
+            vo_t_i.z() = -999;
+
         sensor_msgs::PointCloud::ConstPtr point_3D_msg = nullptr;
         for(unsigned int i = 0; i<point_3D_buf.size(); i++)
         {
@@ -83,64 +152,9 @@ sensor_msgs::ImageConstPtr get_oneimage()
             int point_count = point_3D_msg->points.size();
             if (point_count > 0)
             {
-                int i = 0, j = imu_forward_buf.size() - 1;
-                for( ; i+1 <= j; i++)
-                {
-                    if(imu_forward_buf[i+1]->header.stamp.toSec() > img_time)
-                        break;
-                }
-                for( ; j-1 >= i; j--)
-                {
-                    if(imu_forward_buf[j-1]->header.stamp.toSec() < img_time)
-                        break;
-                }
-                Eigen::Matrix<double, 15, 1> sqrt_cov;
-                for (int k = 0; k < 15; k++)
-                    sqrt_cov[k] = imu_forward_buf[i]->pose.covariance[k];
-                int last_track_num = imu_forward_buf[i]->twist.twist.angular.x + 0.5;
-                double latest_image_time = imu_forward_buf[i]->twist.twist.angular.y;
-                int solver_flag = imu_forward_buf[i]->twist.twist.angular.z + 0.5;
-                std::ostringstream oss;
-                oss << std::fixed << std::setprecision(4);
-                for (int k = 0; k < sqrt_cov.size(); ++k) {
-                    oss << sqrt_cov(k) << " ";
-                }
-                ROS_INFO_STREAM("predicted IMU state sqrt_cov: " << oss.str());
-                ROS_INFO("solver_flag: %d, latest_image_time: %.3f, point: %d, dt: %.3f", solver_flag, latest_image_time, last_track_num, imu_forward_buf[i]->header.stamp.toSec()-latest_image_time);
                 if(solver_flag==1 && last_track_num>0 && fabs(img_time-latest_image_time)<2.0 && sqrt_cov.head<3>().maxCoeff()<0.01 &&
                                                                                                  sqrt_cov.segment<3>(6).maxCoeff()<0.01)
                 {
-                    double imu_time_i = imu_forward_buf[i]->header.stamp.toSec();
-                    Vector3d vio_t_i(imu_forward_buf[i]->pose.pose.position.x, imu_forward_buf[i]->pose.pose.position.y, imu_forward_buf[i]->pose.pose.position.z);
-                    Quaterniond vio_q_i;
-                    vio_q_i.w() = imu_forward_buf[i]->pose.pose.orientation.w;
-                    vio_q_i.x() = imu_forward_buf[i]->pose.pose.orientation.x;
-                    vio_q_i.y() = imu_forward_buf[i]->pose.pose.orientation.y;
-                    vio_q_i.z() = imu_forward_buf[i]->pose.pose.orientation.z;
-                    if (i != j)
-                    {
-                        double imu_time_j = imu_forward_buf[j]->header.stamp.toSec();
-                        Vector3d vio_t_j(imu_forward_buf[j]->pose.pose.position.x, imu_forward_buf[j]->pose.pose.position.y, imu_forward_buf[j]->pose.pose.position.z);
-                        Quaterniond vio_q_j;
-                        vio_q_j.w() = imu_forward_buf[j]->pose.pose.orientation.w;
-                        vio_q_j.x() = imu_forward_buf[j]->pose.pose.orientation.x;
-                        vio_q_j.y() = imu_forward_buf[j]->pose.pose.orientation.y;
-                        vio_q_j.z() = imu_forward_buf[j]->pose.pose.orientation.z;
-
-                        double t_ratio = (img_time - imu_time_i) / (imu_time_j - imu_time_i);
-                        vio_t_i = vio_t_i *(1 - t_ratio) + vio_t_j * t_ratio;
-                        vio_q_i = vio_q_i.slerp(t_ratio, vio_q_j);
-                        vio_q_i.normalize();
-                    }
-                    Vector3d tic;
-                    Quaterniond qic;
-                    tic.x() = point_3D_msg->channels[point_count].values[0];
-                    tic.y() = point_3D_msg->channels[point_count].values[1];
-                    tic.z() = point_3D_msg->channels[point_count].values[2];
-                    qic.w() = point_3D_msg->channels[point_count].values[3];
-                    qic.x() = point_3D_msg->channels[point_count].values[4];
-                    qic.y() = point_3D_msg->channels[point_count].values[5];
-                    qic.z() = point_3D_msg->channels[point_count].values[6];
                     for(int i=0; i<point_count; i++)
                     {
                         int feature_id = point_3D_msg->channels[i].values[0] + 0.5;
@@ -264,7 +278,7 @@ void process()
         {
             ROS_DEBUG("processing camera %d", i);
             if (i != 1 || !STEREO_TRACK)
-                trackerData[i].readImage(ptr->image.rowRange(ROW * i, ROW * (i + 1)), id_points, img_msg_time);
+                trackerData[i].readImage(ptr->image.rowRange(ROW * i, ROW * (i + 1)), id_points, vo_r_i, vo_t_i, img_msg_time);
             else
             {
                 if (EQUALIZE)

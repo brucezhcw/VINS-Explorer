@@ -31,8 +31,8 @@ extern int IMAGE_ROW, IMAGE_COL;
 
 void registerPub(ros::NodeHandle &n);
 
-void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, const Eigen::VectorXd &sqrt_cov,
-                    const int last_track_num, const double latest_image_time, const int solver_flag, const std_msgs::Header &header);
+void pubLatestOdometry(const Estimator &estimator, const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V,
+                    const Eigen::VectorXd &sqrt_cov, const double latest_image_time, const int solver_flag, const std_msgs::Header &header);
 
 void printStatistics(const Estimator &estimator, double t);
 

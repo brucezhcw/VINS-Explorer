@@ -31,7 +31,7 @@ class FeatureTracker
   public:
     FeatureTracker();
 
-    void readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, double _cur_time);
+    void readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, Eigen::Matrix3d R1, Eigen::Vector3d t1, double _cur_time);
 
     void setMask();
 
@@ -44,6 +44,7 @@ class FeatureTracker
     void showUndistortion(const string &name);
 
     void rejectWithF(std::vector<size_t> index_3D, std::vector<cv::Point2f> pts_3D);
+    void rejectWith_predicted_Pose(Eigen::Matrix3d R1, Eigen::Vector3d t1, std::vector<size_t> index_3D, std::vector<cv::Point2f> pts_3D);
 
     void undistortedPoints();
 
@@ -61,6 +62,9 @@ class FeatureTracker
     camodocal::CameraPtr m_camera;
     double cur_time;
     double prev_time;
+
+    Eigen::Matrix3d R0;
+    Eigen::Vector3d t0;
 
     static int n_id;
 };

@@ -206,7 +206,7 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
         else
             solver_flag = 0;
 
-        pubLatestOdometry(tmp_P, tmp_Q, tmp_V, sqrt_cov, estimator.f_manager.last_track_num, latest_image_time, solver_flag, header);
+        pubLatestOdometry(estimator, tmp_P, tmp_Q, tmp_V, sqrt_cov, latest_image_time, solver_flag, header);
     }
 }
 

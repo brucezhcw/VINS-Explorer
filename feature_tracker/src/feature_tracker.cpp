@@ -40,6 +40,7 @@ void reduceVector(vector<int> &v, vector<uchar> status)
 
 FeatureTracker::FeatureTracker()
 {
+    t0.z() = -999;
 }
 
 void FeatureTracker::setMask()
@@ -89,7 +90,7 @@ void FeatureTracker::addPoints()
     }
 }
 
-void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, double _cur_time)
+void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, Eigen::Matrix3d R1, Eigen::Vector3d t1, double _cur_time)
 {
     cv::Mat img;
     vector<size_t> index_3D;
@@ -241,7 +242,11 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
 
     if (PUB_THIS_FRAME)
     {
-        rejectWithF(index_3D, pts_3D);
+        if(t1.z() < -998.9 || t0.z() < -998.9 || cur_time-prev_time>1.5/FREQ)
+            rejectWithF(index_3D, pts_3D);
+        else
+            rejectWith_predicted_Pose(R1, t1, index_3D, pts_3D);
+
         ROS_DEBUG("set mask begins");
         TicToc t_m;
         setMask();
@@ -274,6 +279,8 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
     cur_pts = forw_pts;
     undistortedPoints();
     prev_time = cur_time;
+    R0 = R1;
+    t0 = t1;
 }
 
 void FeatureTracker::rejectWithF(std::vector<size_t> index_3D, std::vector<cv::Point2f> pts_3D)
@@ -316,6 +323,108 @@ void FeatureTracker::rejectWithF(std::vector<size_t> index_3D, std::vector<cv::P
         reduceVector(track_cnt, status);
         ROS_DEBUG("FM ransac: %d -> %lu: %f", size_a, forw_pts.size(), 1.0 * forw_pts.size() / size_a);
         ROS_DEBUG("FM ransac costs: %fms", t_f.toc());
+    }
+}
+
+void FeatureTracker::rejectWith_predicted_Pose(Eigen::Matrix3d R1, Eigen::Vector3d t1, std::vector<size_t> index_3D, std::vector<cv::Point2f> pts_3D)
+{
+    Eigen::Matrix3d R  = R1.transpose() * R0;
+    Eigen::Vector3d t  = R1.transpose() * (t0 - t1);
+    Eigen::Matrix3d R_ = R0.transpose() * R1;
+    Eigen::Vector3d t_ = R0.transpose() * (t1 - t0);
+
+    if (forw_pts.size() > 0)
+    {
+        ROS_DEBUG("reject by predicted Pose begins");
+        TicToc t_f;
+        vector<Eigen::Vector3d> un_cur_p1s(cur_pts.size()), un_forw_p2s(forw_pts.size());
+        for (unsigned int i = 0; i < cur_pts.size(); i++)
+        {
+            Eigen::Vector3d tmp_p;
+            m_camera->liftProjective(Eigen::Vector2d(cur_pts[i].x, cur_pts[i].y), tmp_p);
+            un_cur_p1s[i] = tmp_p / tmp_p.z();
+
+            m_camera->liftProjective(Eigen::Vector2d(forw_pts[i].x, forw_pts[i].y), tmp_p);
+            un_forw_p2s[i] = tmp_p / tmp_p.z();           
+        }
+
+        float dist1, dist2;
+        vector<uchar> status;
+        vector<float> distances;
+        Eigen::Matrix3d skew_t;
+        skew_t <<     0, -t.z(),  t.y(),
+                  t.z(),      0, -t.x(),
+                 -t.y(),  t.x(),      0;
+        Eigen::Matrix3d E = skew_t * R;
+        skew_t <<     0, -t_.z(),  t_.y(),
+                  t_.z(),      0, -t_.x(),
+                 -t_.y(),  t_.x(),      0;
+        Eigen::Matrix3d E_ = skew_t * R_;
+        for (unsigned int i = 0; i < cur_pts.size(); i++)
+        {
+            Eigen::Vector3d epipolar_l;
+            epipolar_l = E * un_cur_p1s[i];
+            dist1 = std::abs(epipolar_l[0] * un_forw_p2s[i].x() + epipolar_l[1] * un_forw_p2s[i].y() +epipolar_l[2]) /
+                                std::sqrt(SQR(epipolar_l[0]) + SQR(epipolar_l[1]));
+            epipolar_l = E_ * un_forw_p2s[i];
+            dist2 = std::abs(epipolar_l[0] * un_cur_p1s[i].x() + epipolar_l[1] * un_cur_p1s[i].y() +epipolar_l[2]) /
+                                std::sqrt(SQR(epipolar_l[0]) + SQR(epipolar_l[1]));
+            float max_dis = std::max(dist1, dist2);
+            if(max_dis > 0.003)
+                status.push_back(0);
+            else
+                status.push_back(1);
+            distances.push_back(max_dis);
+        }
+
+        int count = 0;
+        float dis_ave = 0.0, dis_min = 999, dis_max = 0;
+        for (unsigned int i = 0; i < cur_pts.size(); i++)
+        {
+            if(status[i])
+            {
+                count++;
+                dis_ave += distances[i];
+                if(distances[i]>dis_max) dis_max = distances[i];
+                if(distances[i]<dis_min) dis_min = distances[i];
+            }
+        }
+        if(count>0) ROS_DEBUG("point tracked dis: %f, %f, %f", dis_ave/count, dis_max, dis_min);
+        count = 0; dis_ave = 0.0; dis_min = 999; dis_max = 0;
+        for (unsigned int i = 0; i < cur_pts.size(); i++)
+        {
+            if(status[i]==0)
+            {
+                count++;
+                dis_ave += distances[i];
+                if(distances[i]>dis_max) dis_max = distances[i];
+                if(distances[i]<dis_min) dis_min = distances[i];
+            }
+        }
+        if(count>0) ROS_DEBUG("point not tracked dis: %f, %f, %f", dis_ave/count, dis_max, dis_min);
+
+        float dis_3D = 0, max_3D = 0, min_3D = 999;
+        int size_a = cur_pts.size();
+        int tracked_3D = 0, tracked_good_3D = 0;
+        for (size_t i = 0; i < index_3D.size(); i++)
+            if(status[index_3D[i]])
+            {
+                tracked_3D++;
+                if(distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
+                    tracked_good_3D++;
+                dis_3D += distances[index_3D[i]];
+                if(distances[index_3D[i]]>max_3D) max_3D = distances[index_3D[i]];
+                if(distances[index_3D[i]]<min_3D) min_3D = distances[index_3D[i]];
+            }
+        if(tracked_3D>0) ROS_DEBUG("3D point dis: %f, %f, %f", dis_3D/tracked_3D, max_3D, min_3D);
+        ROS_DEBUG("3D point after reject: %d, %d, %d", tracked_good_3D, tracked_3D, int(index_3D.size()));
+        reduceVector(cur_pts, status);
+        reduceVector(forw_pts, status);
+        reduceVector(cur_un_pts, status);
+        reduceVector(ids, status);
+        reduceVector(track_cnt, status);
+        ROS_DEBUG("reject: %d -> %lu", size_a, forw_pts.size());
+        ROS_DEBUG("reject costs: %fms", t_f.toc());
     }
 }
 
