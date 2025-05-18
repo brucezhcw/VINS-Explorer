@@ -186,7 +186,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     {
         TicToc t_solve;
         solveOdometry();
-        ROS_DEBUG("solver costs: %fms", t_solve.toc());
+        ROS_DEBUG("solver costs: %.2f ms", t_solve.toc());
 
         if (failureDetection())
         {
@@ -201,7 +201,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         TicToc t_margin;
         slideWindow();
         f_manager.removeFailures();
-        ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
+        ROS_DEBUG("marginalization costs: %.2f ms", t_margin.toc());
         // prepare output of VINS
         key_poses.clear();
         for (int i = 0; i <= WINDOW_SIZE; i++)
@@ -213,6 +213,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         last_P0 = Ps[0];
     }
 }
+
 bool Estimator::initialStructure()
 {
     { //check imu observibility
@@ -474,7 +475,7 @@ void Estimator::solveOdometry()
     {
         TicToc t_tri;
         f_manager.triangulate(Ps, tic, ric);
-        ROS_DEBUG("triangulation costs %f", t_tri.toc());
+        ROS_DEBUG("triangulation costs %.2f ms", t_tri.toc());
         optimization();
     }
 }
@@ -767,7 +768,7 @@ void Estimator::optimization()
     }
 
     ROS_DEBUG("visual measurement count: %d", f_m_cnt);
-    ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
+    ROS_DEBUG("prepare for ceres: %.2f ms", t_prepare.toc());
 
     if(relocalization_info)
     {
@@ -821,8 +822,7 @@ void Estimator::optimization()
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
     cout << summary.BriefReport() << endl;
-    ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
-    ROS_DEBUG("solver costs: %f", t_solver.toc());
+    ROS_DEBUG("solver costs: %.2f ms", t_solver.toc());
 
     double2vector();
     if (solver_flag == Estimator::SolverFlag::NON_LINEAR)
@@ -914,11 +914,11 @@ void Estimator::optimization()
 
         TicToc t_pre_margin;
         marginalization_info->preMarginalize();
-        ROS_DEBUG("pre marginalization %f ms", t_pre_margin.toc());
+        ROS_DEBUG("pre marginalization %.2f ms", t_pre_margin.toc());
         
         TicToc t_margin;
         marginalization_info->marginalize();
-        ROS_DEBUG("marginalization %f ms", t_margin.toc());
+        ROS_DEBUG("marginalization %.2f ms", t_margin.toc());
 
         std::unordered_map<long, double *> addr_shift;
         for (int i = 1; i <= WINDOW_SIZE; i++)
@@ -969,12 +969,12 @@ void Estimator::optimization()
             TicToc t_pre_margin;
             ROS_DEBUG("begin marginalization");
             marginalization_info->preMarginalize();
-            ROS_DEBUG("end pre marginalization, %f ms", t_pre_margin.toc());
+            ROS_DEBUG("end pre marginalization, %.2f ms", t_pre_margin.toc());
 
             TicToc t_margin;
             ROS_DEBUG("begin marginalization");
             marginalization_info->marginalize();
-            ROS_DEBUG("end marginalization, %f ms", t_margin.toc());
+            ROS_DEBUG("end marginalization, %.2f ms", t_margin.toc());
             
             std::unordered_map<long, double *> addr_shift;
             for (int i = 0; i <= WINDOW_SIZE; i++)
@@ -1007,9 +1007,9 @@ void Estimator::optimization()
             
         }
     }
-    ROS_DEBUG("whole marginalization costs: %f", t_whole_marginalization.toc());
+    ROS_DEBUG("whole marginalization costs: %.2f ms", t_whole_marginalization.toc());
     
-    ROS_DEBUG("whole time for ceres: %f", t_whole.toc());
+    ROS_DEBUG("whole time for ceres: %.2f ms", t_whole.toc());
 }
 
 void Estimator::slideWindow()

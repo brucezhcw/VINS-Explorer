@@ -12,14 +12,14 @@ bool inBorder(const cv::Point2f &pt)
     return BORDER_SIZE <= img_x && img_x < COL - BORDER_SIZE && BORDER_SIZE <= img_y && img_y < ROW - BORDER_SIZE;
 }
 
-float distance(cv::Point2f &pt1, cv::Point2f &pt2)
+float distance(const cv::Point2f &pt1, const cv::Point2f &pt2)
 {
     float dx = pt1.x - pt2.x;
     float dy = pt1.y - pt2.y;
     return sqrt(dx * dx + dy * dy);
 }
 
-void reduceVector(vector<cv::Point2f> &v, vector<uchar> status)
+void reduceVector(vector<cv::Point2f> &v, const vector<uchar> &status)
 {
     int j = 0;
     for (int i = 0; i < int(v.size()); i++)
@@ -28,7 +28,7 @@ void reduceVector(vector<cv::Point2f> &v, vector<uchar> status)
     v.resize(j);
 }
 
-void reduceVector(vector<int> &v, vector<uchar> status)
+void reduceVector(vector<int> &v, const vector<uchar> &status)
 {
     int j = 0;
     for (int i = 0; i < int(v.size()); i++)
@@ -41,6 +41,7 @@ void reduceVector(vector<int> &v, vector<uchar> status)
 FeatureTracker::FeatureTracker()
 {
     t0.z() = -999;
+    t1.z() = -999;
 }
 
 void FeatureTracker::setMask()
@@ -49,8 +50,6 @@ void FeatureTracker::setMask()
         mask = fisheye_mask.clone();
     else
         mask = cv::Mat(ROW, COL, CV_8UC1, cv::Scalar(255));
-    
-
     // prefer to keep features that are tracked for long time
     vector<pair<int, pair<pair<cv::Point2f, cv::Point2f>, int>>> cnt_pts_id;
 
@@ -90,7 +89,7 @@ void FeatureTracker::addPoints()
     }
 }
 
-void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, Eigen::Matrix3d R1, Eigen::Vector3d t1, double _cur_time)
+void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_points, const Eigen::Matrix3d &R2, const Eigen::Vector3d &t2, const double _cur_time)
 {
     cv::Mat img;
     vector<size_t> index_3D;
@@ -103,7 +102,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
         cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
         TicToc t_c;
         clahe->apply(_img, img);
-        ROS_DEBUG("CLAHE costs: %fms", t_c.toc());
+        ROS_DEBUG("CLAHE costs: %.2f ms", t_c.toc());
     }
     else
         img = _img;
@@ -152,9 +151,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
                                 cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01),
                                 cv::OPTFLOW_USE_INITIAL_FLOW);
         { /* 反向跟踪 */
-            int n_good = 0, n_bad=  0;
-            float err_limit = 30.0;
-            vector<float> sorted_err;
+            int n_before = 0, n_after =  0;
             vector<uchar> reverse_status;
             vector<cv::Point2f> reverse_pts = cur_pts;
             cv::calcOpticalFlowPyrLK(forw_img, cur_img, forw_pts, reverse_pts, reverse_status, err, cv::Size(11, 11), 1, 
@@ -162,38 +159,18 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
                                     cv::OPTFLOW_USE_INITIAL_FLOW);
             for(size_t i = 0; i < status.size(); i++)
             {
-                if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 0.5)
-                {
-                    sorted_err.push_back(distance(cur_pts[i], forw_pts[i]));
+                if(status[i]) {
+                    n_before++;
                 }
-            }
-            if(sorted_err.size() > 2)
-            {
-                std::sort(sorted_err.begin(), sorted_err.end());
-                err_limit = sorted_err[sorted_err.size()/2] * 2.0;
-            }
-            err_limit = err_limit < 0.5 ? 0.5 : err_limit;
-            err_limit = err_limit < distance_3D ? distance_3D + 0.1 : err_limit;
-            for(size_t i = 0; i < status.size(); i++)
-            {
-                if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 0.5)
-                {
-                    if(distance(cur_pts[i], forw_pts[i]) <= err_limit) {
-                        n_good++;
-                        status[i] = 1;
-                    } else {
-                        n_bad++;
-                        status[i] = 0;
-                    }
-                }
-                else
+                if(status[i] && reverse_status[i] && distance(cur_pts[i], reverse_pts[i]) <= 0.5 && inBorder(forw_pts[i])) {
+                    n_after++;
+                } else {
                     status[i] = 0;
+                }
             }
-            ROS_INFO("tracking: %5.2f %5.2f, %d %d", err_limit, distance_3D, n_good, n_bad);
+            ROS_INFO("tracking: %d %d", n_before, n_after);
         }
-        for (size_t i = 0; i < forw_pts.size(); i++)
-            if (status[i] && !inBorder(forw_pts[i]))
-                status[i] = 0;
+
         int tracked_3D = 0, tracked_good_3D = 0;
         for (size_t i = 0; i < index_3D.size(); i++)
             if(status[index_3D[i]])
@@ -202,9 +179,9 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
                 if(distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
                     tracked_good_3D++;
             }
-        ROS_INFO("3D point: %d, %d, %d", tracked_good_3D, tracked_3D, int(index_3D.size()));
+        ROS_INFO("3D point after tracking: %d, %d, %d", tracked_good_3D, tracked_3D, int(index_3D.size()));
         if (PUB_THIS_FRAME)
-        {
+        { /* 3D点 index重映射 */
             int status_0 = 0;
             for(size_t i = 0, j = 0; index_3D.size()>0 && i < forw_pts.size(); i++)
             {
@@ -234,7 +211,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
         reduceVector(ids, status);
         reduceVector(cur_un_pts, status);
         reduceVector(track_cnt, status);
-        ROS_INFO("temporal optical flow costs: %fms", t_o.toc());
+        ROS_INFO("temporal optical flow costs: %.2f ms", t_o.toc());
     }
 
     for (auto &n : track_cnt)
@@ -242,15 +219,15 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
 
     if (PUB_THIS_FRAME)
     {
-        if(t1.z() < -998.9 || t0.z() < -998.9 || cur_time-prev_time>1.5/FREQ)
+        if(t1.z() < -998.9 || t2.z() < -998.9 || cur_time-prev_time>1.5/FREQ || (t2 - t1).norm() <= 0.02)
             rejectWithF(index_3D, pts_3D);
         else
-            rejectWith_predicted_Pose(R1, t1, index_3D, pts_3D);
+            rejectWith_predicted_Pose(R2, t2, index_3D, pts_3D);
 
         ROS_DEBUG("set mask begins");
         TicToc t_m;
         setMask();
-        ROS_DEBUG("set mask costs %fms", t_m.toc());
+        ROS_DEBUG("set mask costs %.2f ms", t_m.toc());
 
         ROS_DEBUG("detect feature begins");
         TicToc t_t;
@@ -267,23 +244,25 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
         }
         else
             n_pts.clear();
-        ROS_DEBUG("detect feature costs: %fms", t_t.toc());
+        ROS_DEBUG("detect feature costs: %.2f ms", t_t.toc());
 
-        ROS_DEBUG("add feature begins");
         TicToc t_a;
         addPoints();
-        ROS_DEBUG("selectFeature costs: %fms", t_a.toc());
     }
     cur_img = forw_img;
     prev_pts = cur_pts;
     cur_pts = forw_pts;
     undistortedPoints();
+    pprev_time = prev_time;
     prev_time = cur_time;
     R0 = R1;
     t0 = t1;
+    R1 = R2;
+    t1 = t2;
+    prev_ids = ids;
 }
 
-void FeatureTracker::rejectWithF(std::vector<size_t> index_3D, std::vector<cv::Point2f> pts_3D)
+void FeatureTracker::rejectWithF(const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D)
 {
     if (forw_pts.size() >= 8)
     {
@@ -321,24 +300,21 @@ void FeatureTracker::rejectWithF(std::vector<size_t> index_3D, std::vector<cv::P
         reduceVector(cur_un_pts, status);
         reduceVector(ids, status);
         reduceVector(track_cnt, status);
-        ROS_DEBUG("FM ransac: %d -> %lu: %f", size_a, forw_pts.size(), 1.0 * forw_pts.size() / size_a);
-        ROS_DEBUG("FM ransac costs: %fms", t_f.toc());
+        ROS_DEBUG("FM ransac: %d -> %lu", size_a, forw_pts.size());
+        ROS_DEBUG("FM ransac costs: %.2f ms", t_f.toc());
     }
 }
 
-void FeatureTracker::rejectWith_predicted_Pose(Eigen::Matrix3d R1, Eigen::Vector3d t1, std::vector<size_t> index_3D, std::vector<cv::Point2f> pts_3D)
+void FeatureTracker::rejectWith_predicted_Pose(const Eigen::Matrix3d &R2, const Eigen::Vector3d &t2, const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D)
 {
-    Eigen::Matrix3d R  = R1.transpose() * R0;
-    Eigen::Vector3d t  = R1.transpose() * (t0 - t1);
-    Eigen::Matrix3d R_ = R0.transpose() * R1;
-    Eigen::Vector3d t_ = R0.transpose() * (t1 - t0);
-
     if (forw_pts.size() > 0)
     {
         ROS_DEBUG("reject by predicted Pose begins");
         TicToc t_f;
-        vector<Eigen::Vector3d> un_cur_p1s(cur_pts.size()), un_forw_p2s(forw_pts.size());
-        for (unsigned int i = 0; i < cur_pts.size(); i++)
+        int size_a = cur_pts.size();
+        vector<uchar> status(size_a, 1);
+        vector<Eigen::Vector3d> un_cur_p1s(size_a), un_forw_p2s(size_a);
+        for (int i = 0; i < size_a; i++)
         {
             Eigen::Vector3d tmp_p;
             m_camera->liftProjective(Eigen::Vector2d(cur_pts[i].x, cur_pts[i].y), tmp_p);
@@ -347,85 +323,202 @@ void FeatureTracker::rejectWith_predicted_Pose(Eigen::Matrix3d R1, Eigen::Vector
             m_camera->liftProjective(Eigen::Vector2d(forw_pts[i].x, forw_pts[i].y), tmp_p);
             un_forw_p2s[i] = tmp_p / tmp_p.z();           
         }
-
-        float dist1, dist2;
-        vector<uchar> status;
-        vector<float> distances;
-        Eigen::Matrix3d skew_t;
-        skew_t <<     0, -t.z(),  t.y(),
-                  t.z(),      0, -t.x(),
-                 -t.y(),  t.x(),      0;
-        Eigen::Matrix3d E = skew_t * R;
-        skew_t <<     0, -t_.z(),  t_.y(),
-                  t_.z(),      0, -t_.x(),
-                 -t_.y(),  t_.x(),      0;
-        Eigen::Matrix3d E_ = skew_t * R_;
-        for (unsigned int i = 0; i < cur_pts.size(); i++)
-        {
-            Eigen::Vector3d epipolar_l;
-            epipolar_l = E * un_cur_p1s[i];
-            dist1 = std::abs(epipolar_l[0] * un_forw_p2s[i].x() + epipolar_l[1] * un_forw_p2s[i].y() +epipolar_l[2]) /
-                                std::sqrt(SQR(epipolar_l[0]) + SQR(epipolar_l[1]));
-            epipolar_l = E_ * un_forw_p2s[i];
-            dist2 = std::abs(epipolar_l[0] * un_cur_p1s[i].x() + epipolar_l[1] * un_cur_p1s[i].y() +epipolar_l[2]) /
-                                std::sqrt(SQR(epipolar_l[0]) + SQR(epipolar_l[1]));
-            float max_dis = std::max(dist1, dist2);
-            if(max_dis > 0.003)
-                status.push_back(0);
-            else
-                status.push_back(1);
-            distances.push_back(max_dis);
-        }
-
-        int count = 0;
-        float dis_ave = 0.0, dis_min = 999, dis_max = 0;
-        for (unsigned int i = 0; i < cur_pts.size(); i++)
-        {
-            if(status[i])
+        if(t0.z() > -998.9 && t1.z() > -998.9 && t2.z() > -998.9 && (t2 - t0).norm() > 0.02 &&
+            cur_time-prev_time<1.5/FREQ && prev_time-pprev_time<1.5/FREQ) {
+            /* 三视图几何校验(点-点重投影误差)
+                1> 利用已知的帧间位姿变换在第1和第3帧中逐点进行三角化求解3D点
+                2> 将上述3D点逐点投影到第2帧图像
+                3> 验证点-点重投影误差 */
+            int three_view_count = 0;
+            vector<uchar> need_to_check;
+            vector<Eigen::Vector3d> un_pre_p0s(size_a);
+            for (int i = 0; i < size_a; i++)
             {
-                count++;
-                dis_ave += distances[i];
-                if(distances[i]>dis_max) dis_max = distances[i];
-                if(distances[i]<dis_min) dis_min = distances[i];
+                int id = -1;
+                for (size_t j = 0; j < prev_ids.size(); j++)
+                {
+                    if(prev_ids[j] == ids[i]) 
+                    {
+                        id = j;
+                        break;
+                    }
+                }
+                if(id < 0) {
+                    status[i] = 0;
+                    need_to_check.push_back(0);
+                } else {
+                    three_view_count++;
+                    need_to_check.push_back(1);
+                    Eigen::Vector3d tmp_p;
+                    m_camera->liftProjective(Eigen::Vector2d(prev_pts[id].x, prev_pts[id].y), tmp_p);
+                    un_pre_p0s[i] = tmp_p / tmp_p.z();
+                }
             }
-        }
-        if(count>0) ROS_DEBUG("point tracked dis: %f, %f, %f", dis_ave/count, dis_max, dis_min);
-        count = 0; dis_ave = 0.0; dis_min = 999; dis_max = 0;
-        for (unsigned int i = 0; i < cur_pts.size(); i++)
-        {
-            if(status[i]==0)
+            for (size_t i = 0; i < index_3D.size(); i++)
             {
-                count++;
-                dis_ave += distances[i];
-                if(distances[i]>dis_max) dis_max = distances[i];
-                if(distances[i]<dis_min) dis_min = distances[i];
+                if(need_to_check[index_3D[i]] && distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
+                    need_to_check[index_3D[i]] = 2; //> 标记3D点
             }
-        }
-        if(count>0) ROS_DEBUG("point not tracked dis: %f, %f, %f", dis_ave/count, dis_max, dis_min);
+            ROS_DEBUG("three view count: %d", three_view_count);
 
-        float dis_3D = 0, max_3D = 0, min_3D = 999;
-        int size_a = cur_pts.size();
-        int tracked_3D = 0, tracked_good_3D = 0;
-        for (size_t i = 0; i < index_3D.size(); i++)
-            if(status[index_3D[i]])
+            rejectWith_three_view(status, need_to_check, un_pre_p0s, un_cur_p1s, un_forw_p2s, t0, R0, t1, R1, t2, R2);
+        } else {
+            /* 双视图几何校验(点-线重投影误差)
+                1> 利用已知的帧间位姿变换构造本质矩阵E
+                2> 分别求解两帧图像中点投影到另一帧图像后与极线的距离
+                3> 验证最大点-线重投影距离 */
+            vector<uchar> flag_3D(size_a, 0);
+            for (size_t i = 0; i < index_3D.size(); i++)
             {
-                tracked_3D++;
                 if(distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
-                    tracked_good_3D++;
-                dis_3D += distances[index_3D[i]];
-                if(distances[index_3D[i]]>max_3D) max_3D = distances[index_3D[i]];
-                if(distances[index_3D[i]]<min_3D) min_3D = distances[index_3D[i]];
+                    flag_3D[index_3D[i]] = 1; //> 标记3D点
             }
-        if(tracked_3D>0) ROS_DEBUG("3D point dis: %f, %f, %f", dis_3D/tracked_3D, max_3D, min_3D);
-        ROS_DEBUG("3D point after reject: %d, %d, %d", tracked_good_3D, tracked_3D, int(index_3D.size()));
+
+            rejectWith_two_view(status, flag_3D, un_cur_p1s, un_forw_p2s, t1, R1, t2, R2);
+        }
+
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
         reduceVector(cur_un_pts, status);
         reduceVector(ids, status);
         reduceVector(track_cnt, status);
         ROS_DEBUG("reject: %d -> %lu", size_a, forw_pts.size());
-        ROS_DEBUG("reject costs: %fms", t_f.toc());
+        ROS_DEBUG("reject costs: %.2f ms", t_f.toc());
     }
+}
+
+void FeatureTracker::rejectWith_two_view(vector<uchar> &status, const vector<uchar> &flag_3D, const vector<Eigen::Vector3d> &un_cur_p1s,
+            const vector<Eigen::Vector3d> &un_forw_p2s, const Vector3d &t1, const Matrix3d &R1, const Vector3d &t2, const Matrix3d &R2)
+{
+    Eigen::Matrix3d R  = R2.transpose() * R1;
+    Eigen::Vector3d t  = R2.transpose() * (t1 - t2);
+    Eigen::Matrix3d R_ = R1.transpose() * R2;
+    Eigen::Vector3d t_ = R1.transpose() * (t2 - t1);
+
+    float dist1, dist2;
+    int size_a = status.size();
+    Eigen::Matrix3d skew_t;
+    skew_t <<     0, -t.z(),  t.y(),
+            t.z(),      0, -t.x(),
+            -t.y(),  t.x(),      0;
+    Eigen::Matrix3d E = skew_t * R;
+    skew_t <<     0, -t_.z(),  t_.y(),
+            t_.z(),      0, -t_.x(),
+            -t_.y(),  t_.x(),      0;
+    Eigen::Matrix3d E_ = skew_t * R_;
+    int count_3D=0, count_2D=0;
+    float ave_diff_3D=0, max_diff_3D=0, min_diff_3D=999;
+    float ave_diff_2D=0, max_diff_2D=0, min_diff_2D=999;
+    for (int i = 0; i < size_a; i++)
+    {
+        Eigen::Vector3d epipolar_l;
+        epipolar_l = E * un_cur_p1s[i];
+        dist1 = std::abs(epipolar_l[0] * un_forw_p2s[i].x() + epipolar_l[1] * un_forw_p2s[i].y() +epipolar_l[2]) /
+                            std::sqrt(SQR(epipolar_l[0]) + SQR(epipolar_l[1]));
+        epipolar_l = E_ * un_forw_p2s[i];
+        dist2 = std::abs(epipolar_l[0] * un_cur_p1s[i].x() + epipolar_l[1] * un_cur_p1s[i].y() +epipolar_l[2]) /
+                            std::sqrt(SQR(epipolar_l[0]) + SQR(epipolar_l[1]));
+        float max_dis = std::max(dist1, dist2);
+        if(max_dis > 0.003)
+            status[i] = 0;
+        else
+            status[i] = 1;
+        if(flag_3D[i]) {
+            count_3D++;
+            ave_diff_3D += max_dis;
+            if(max_dis > max_diff_3D) max_diff_3D = max_dis;
+            if(max_dis < min_diff_3D) min_diff_3D = max_dis;
+
+        } else {
+            count_2D++;
+            ave_diff_2D += max_dis;
+            if(max_dis > max_diff_2D) max_diff_2D = max_dis;
+            if(max_dis < min_diff_2D) min_diff_2D = max_dis;
+        }
+    }
+
+    if(count_3D > 0) ROS_DEBUG("reject with two view 3D: %f, %f, %f", ave_diff_3D/count_3D, max_diff_3D, min_diff_3D);
+    if(count_2D > 0) ROS_DEBUG("reject with two view 2D: %f, %f, %f", ave_diff_2D/count_2D, max_diff_2D, min_diff_2D);
+}
+
+void FeatureTracker::rejectWith_three_view(vector<uchar> &status, const vector<uchar> &need_to_check,
+    const vector<Eigen::Vector3d> &points_0, const vector<Eigen::Vector3d> &points_1, const vector<Eigen::Vector3d> &points_2,
+    const Vector3d &t0, const Matrix3d &R0, const Vector3d &t1, const Matrix3d &R1, const Vector3d &t2, const Matrix3d &R2)
+{
+    Eigen::Matrix3d R  = R0.transpose() * R2;
+    Eigen::Vector3d t  = R0.transpose() * (t2 - t0);
+    Eigen::Matrix3d R_  = R0.transpose() * R1;
+    Eigen::Vector3d t_  = R0.transpose() * (t1 - t0);
+
+    int count_3D=0, count_2D=0, count_depth=0;
+    float ave_diff_3D=0, max_diff_3D=0, min_diff_3D=999;
+    float ave_diff_2D=0, max_diff_2D=0, min_diff_2D=999;
+    float ave_depth=0, max_depth=0, min_depth=9999;
+    for (unsigned int i = 0; i < points_2.size(); i++)
+    { /* 第0 2帧求解深度, 第1帧校验 */
+        if(status[i] == 0 || need_to_check[i] == 0)
+            continue;
+
+        Eigen::Vector3d f;
+        Eigen::Matrix<double, 3, 4> P;
+        Eigen::MatrixXd svd_A(2 * 2, 4);
+
+        P.leftCols<3>() = Eigen::Matrix3d::Identity();
+        P.rightCols<1>() = Eigen::Vector3d::Zero();
+        f = points_0[i].normalized();
+        svd_A.row(0) = f[0] * P.row(2) - f[2] * P.row(0);
+        svd_A.row(1) = f[1] * P.row(2) - f[2] * P.row(1);
+
+        P.leftCols<3>() = R.transpose();
+        P.rightCols<1>() = -R.transpose() * t;
+        f = points_2[i].normalized();
+        svd_A.row(2) = f[0] * P.row(2) - f[2] * P.row(0);
+        svd_A.row(3) = f[1] * P.row(2) - f[2] * P.row(1);
+        Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
+        
+        double svd_dep = svd_V[2] / svd_V[3];
+        Eigen::Vector3d points_3D = Vector3d(points_0[i].x(), points_0[i].y(), 1.0) * svd_dep;
+        Eigen::Vector3d prdicted_p1 = R_.transpose()  * (points_3D - t_);
+        prdicted_p1 /= prdicted_p1.z();
+        double diff = (prdicted_p1 - points_1[i]).norm();
+
+        if(svd_dep < 0.1 || svd_dep>500) {
+            status[i] = 0;
+            continue;
+        }
+        if(need_to_check[i] == 2) {
+            count_3D++;
+            ave_diff_3D += diff;
+            if(diff > max_diff_3D) max_diff_3D = diff;
+            if(diff < min_diff_3D) min_diff_3D = diff;
+
+        } else {
+            count_2D++;
+            ave_diff_2D += diff;
+            if(diff > max_diff_2D) max_diff_2D = diff;
+            if(diff < min_diff_2D) min_diff_2D = diff;
+
+            float thres;
+
+            if(svd_dep < 50) thres = 0.005;
+            else if(svd_dep < 100) thres = 0.004;
+            else if(svd_dep < 200) thres = 0.003;
+            else if(svd_dep < 300) thres = 0.002;
+            else thres = 0.001;
+
+            if(diff > thres) status[i] = 0;
+        }
+        if(status[i]) {
+            count_depth++;
+            ave_depth += svd_dep;
+            if(svd_dep > max_depth) max_depth = svd_dep;
+            if(svd_dep < min_depth) min_depth = svd_dep;
+        }
+    }
+
+    if(count_3D > 0) ROS_DEBUG("reject with three view 3D: %f, %f, %f", ave_diff_3D/count_3D, max_diff_3D, min_diff_3D);
+    if(count_2D > 0) ROS_DEBUG("reject with three view 2D: %f, %f, %f", ave_diff_2D/count_2D, max_diff_2D, min_diff_2D);
+    if(count_depth > 0) ROS_DEBUG("reject with three view depth: %f, %f, %f", ave_depth/count_depth, max_depth, min_depth);
 }
 
 bool FeatureTracker::updateID(unsigned int i)

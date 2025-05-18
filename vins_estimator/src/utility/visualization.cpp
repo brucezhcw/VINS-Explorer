@@ -106,14 +106,14 @@ void printStatistics(const Estimator &estimator, double t)
     static int sum_of_calculation = 0;
     sum_of_time += t;
     sum_of_calculation++;
-    ROS_DEBUG("vo solver costs: %f ms", t);
-    ROS_DEBUG("average of time %f ms", sum_of_time / sum_of_calculation);
+    ROS_DEBUG("vo solver costs: %.2f ms", t);
+    ROS_DEBUG("average of time %.2f ms", sum_of_time / sum_of_calculation);
 
     sum_of_path += (estimator.Ps[WINDOW_SIZE] - last_path).norm();
     last_path = estimator.Ps[WINDOW_SIZE];
-    ROS_DEBUG("sum of path %f", sum_of_path);
+    ROS_DEBUG("sum of path %.3f m", sum_of_path);
     if (ESTIMATE_TD)
-        ROS_INFO("td %f", estimator.td);
+        ROS_INFO("td %.3f s", estimator.td);
 }
 
 void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)

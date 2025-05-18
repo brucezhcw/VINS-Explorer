@@ -152,7 +152,7 @@ sensor_msgs::ImageConstPtr get_oneimage()
             int point_count = point_3D_msg->points.size();
             if (point_count > 0)
             {
-                if(solver_flag==1 && last_track_num>0 && fabs(img_time-latest_image_time)<2.0 && sqrt_cov.head<3>().maxCoeff()<0.01 &&
+                if(solver_flag==1 && last_track_num>0 && fabs(img_time-latest_image_time)<2.0 && sqrt_cov.head<3>().maxCoeff()<0.005 &&
                                                                                                  sqrt_cov.segment<3>(6).maxCoeff()<0.01)
                 {
                     for(int i=0; i<point_count; i++)
@@ -221,7 +221,6 @@ void process()
             continue;
 
         double img_msg_time = img_msg->header.stamp.toSec();
-        ROS_INFO("new image coming %.3f", img_msg_time);
         if(first_image_flag)
         {
             first_image_flag = false;
@@ -276,7 +275,6 @@ void process()
         TicToc t_r;
         for (int i = 0; i < NUM_OF_CAM; i++)
         {
-            ROS_DEBUG("processing camera %d", i);
             if (i != 1 || !STEREO_TRACK)
                 trackerData[i].readImage(ptr->image.rowRange(ROW * i, ROW * (i + 1)), id_points, vo_r_i, vo_t_i, img_msg_time);
             else
@@ -402,7 +400,7 @@ void process()
                 pub_match.publish(ptr->toImageMsg());
             }
         }
-        ROS_INFO("whole feature tracker processing costs: %f\n", t_r.toc());
+        ROS_INFO("whole feature tracker processing costs: %.2f ms\n", t_r.toc());
     }
 }
 
