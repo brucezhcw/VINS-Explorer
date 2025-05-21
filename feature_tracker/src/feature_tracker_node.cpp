@@ -66,6 +66,7 @@ sensor_msgs::ImageConstPtr get_oneimage()
         return nullptr;
 
     id_points.clear();
+    vo_t_i.z() = -999;
     if (imu_forward_buf.back()->header.stamp.toSec() >= img_buf.front()->header.stamp.toSec() &&
         imu_forward_buf.front()->header.stamp.toSec() <= img_buf.front()->header.stamp.toSec())
     { /* 有效的IMU递推位姿 */
@@ -377,7 +378,10 @@ void process()
                         else
                         {
                             double len = std::min(1.0, 1.0 * trackerData[i].track_cnt[j] / WINDOW_SIZE);
-                            cv::circle(tmp_img, trackerData[i].cur_pts[j], 2, cv::Scalar(255 * (1 - len), 0, 255 * len), 2);
+                            if (trackerData[i].track_cnt[j] > 1)
+                                cv::circle(tmp_img, trackerData[i].cur_pts[j], 2, cv::Scalar(255 * (1 - len), 0, 255 * len), 2);
+                            else
+                                cv::circle(tmp_img, trackerData[i].cur_pts[j], 2, cv::Scalar(255 * (1 - len), 255, 255 * len), 2);
                         }
                     }
 

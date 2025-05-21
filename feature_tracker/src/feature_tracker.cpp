@@ -246,9 +246,14 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
             n_pts.clear();
         ROS_DEBUG("detect feature costs: %.2f ms", t_t.toc());
 
-        TicToc t_a;
+        prev_ids = ids;
         addPoints();
     }
+    else
+    {
+        prev_ids = ids;
+    }
+
     cur_img = forw_img;
     prev_pts = cur_pts;
     cur_pts = forw_pts;
@@ -259,7 +264,6 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
     t0 = t1;
     R1 = R2;
     t1 = t2;
-    prev_ids = ids;
 }
 
 void FeatureTracker::rejectWithF(const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D)

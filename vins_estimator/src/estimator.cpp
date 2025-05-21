@@ -517,9 +517,16 @@ void Estimator::vector2double()
         para_Ex_Pose[i][6] = q.w();
     }
 
+    float ave_dep=0, max_dep=0, min_dep=9999;
     VectorXd dep = f_manager.getDepthVector();
-    for (int i = 0; i < f_manager.getFeatureCount(); i++)
+    for (int i = 0; i < f_manager.getFeatureCount(); i++) {
         para_Feature[i][0] = dep(i);
+        double depth = 1.0/dep(i);
+        ave_dep += depth;
+        if(depth > max_dep) max_dep = depth;
+        if(depth < min_dep) min_dep = depth;
+    }
+    if(f_manager.getFeatureCount() > 0) ROS_DEBUG("feature depth: %.2f, %.2f, %.2f", ave_dep/f_manager.getFeatureCount(), max_dep, min_dep);
     if (ESTIMATE_TD)
         para_Td[0][0] = td;
 }
@@ -584,13 +591,19 @@ void Estimator::double2vector()
                              para_Ex_Pose[i][5]).toRotationMatrix();
     }
 
+    float ave_dep=0, max_dep=0, min_dep=9999;
     VectorXd dep = f_manager.getDepthVector();
-    for (int i = 0; i < f_manager.getFeatureCount(); i++)
+    for (int i = 0; i < f_manager.getFeatureCount(); i++) {
         dep(i) = para_Feature[i][0];
+        double depth = 1.0/dep(i);
+        ave_dep += depth;
+        if(depth > max_dep) max_dep = depth;
+        if(depth < min_dep) min_dep = depth;
+    }
+    if(f_manager.getFeatureCount() > 0) ROS_DEBUG("feature depth: %.2f, %.2f, %.2f", ave_dep/f_manager.getFeatureCount(), max_dep, min_dep);
     f_manager.setDepth(dep);
     if (ESTIMATE_TD)
         td = para_Td[0][0];
-
     // relative info between two loop frame
     if(relocalization_info)
     { 
