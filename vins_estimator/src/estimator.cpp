@@ -676,13 +676,187 @@ bool Estimator::failureDetection()
     return false;
 }
 
-
-void Estimator::optimization()
+void Estimator::optimization_with_fixed_Pose()
 {
     ceres::Problem problem;
     ceres::LossFunction *loss_function;
     //loss_function = new ceres::HuberLoss(1.0);
     loss_function = new ceres::CauchyLoss(1.0);
+    ROS_DEBUG("optimization with fixed Pose...");
+    for (int i = 0; i < WINDOW_SIZE + 1; i++)
+    {
+        ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+        problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
+        if(i == WINDOW_SIZE) ROS_DEBUG("fix Pose param");
+        problem.SetParameterBlockConstant(para_Pose[i]);
+        problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
+        if(i == WINDOW_SIZE) ROS_DEBUG("fix Velocity bias param");
+        problem.SetParameterBlockConstant(para_SpeedBias[i]);
+    }
+    for (int i = 0; i < NUM_OF_CAM; i++)
+    {
+        ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+        problem.AddParameterBlock(para_Ex_Pose[i], SIZE_POSE, local_parameterization);
+        ROS_DEBUG("fix extinsic param");
+        problem.SetParameterBlockConstant(para_Ex_Pose[i]);
+
+    }
+    if (ESTIMATE_TD)
+    {
+        problem.AddParameterBlock(para_Td[0], 1);
+        ROS_DEBUG("fix Td param");
+        problem.SetParameterBlockConstant(para_Td[0]);
+    }
+
+    TicToc t_whole, t_prepare;
+    vector2double();
+
+    int f_m_cnt = 0;
+    int feature_index = -1;
+    std::unordered_map<ceres::ResidualBlockId, std::pair<int, double>> residual_block_index_map;
+    for (auto &it_per_id : f_manager.feature)
+    {
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
+            continue;
+ 
+        ++feature_index;
+
+        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+        
+        Vector3d pts_i = it_per_id.feature_per_frame[0].point;
+
+        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        {
+            imu_j++;
+            if (imu_i == imu_j)
+            {
+                continue;
+            }
+            Vector3d pts_j = it_per_frame.point;
+            ceres::ResidualBlockId block_id;
+            if (ESTIMATE_TD)
+            {
+                    ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
+                                                                     it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
+                                                                     it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
+                    block_id = problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
+                    /*
+                    double **para = new double *[5];
+                    para[0] = para_Pose[imu_i];
+                    para[1] = para_Pose[imu_j];
+                    para[2] = para_Ex_Pose[0];
+                    para[3] = para_Feature[feature_index];
+                    para[4] = para_Td[0];
+                    f_td->check(para);
+                    */
+            }
+            else
+            {
+                ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
+                block_id = problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
+            }
+
+            if(it_per_id.used_num >= 3) //>  && it_per_id.start_frame > WINDOW_SIZE/2
+                residual_block_index_map[block_id] = std::make_pair(f_m_cnt, it_per_id.estimated_depth);
+            else
+                residual_block_index_map[block_id] = std::make_pair(f_m_cnt, -1.0);
+            f_m_cnt++;
+        }
+    }
+
+    ROS_DEBUG("visual measurement count: %d, feature count: %d", f_m_cnt, feature_index+1);
+    ROS_DEBUG("prepare for ceres: %.2f ms", t_prepare.toc());
+
+    ceres::Solver::Options options;
+
+    options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+    //options.num_threads = 2;
+    options.trust_region_strategy_type = ceres::DOGLEG; //> ceres::LEVENBERG_MARQUARDT
+    options.max_num_iterations = NUM_ITERATIONS;
+    options.function_tolerance = 1.e-2;     //> 达到精度要求即结束，否则会浪费大量的时间进行不必要的优化
+    //options.use_explicit_schur_complement = true;
+    //options.minimizer_progress_to_stdout = true;
+    //options.use_nonmonotonic_steps = true;
+    if (marginalization_flag == MARGIN_OLD)
+        options.max_solver_time_in_seconds = SOLVER_TIME * 4.0 / 5.0;
+    else
+        options.max_solver_time_in_seconds = SOLVER_TIME;
+    TicToc t_solver;
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    cout << summary.BriefReport() << endl;
+    ROS_DEBUG("solver costs: %.2f ms", t_solver.toc());
+    /* 残差统计，标记异常残差 */
+    ceres::Problem::EvaluateOptions evaluate_options;
+    evaluate_options.apply_loss_function = false; // 原始残差
+
+    double total_cost = 0.0;
+    std::vector<double> residuals;
+    std::vector<ceres::ResidualBlockId> residual_blocks;
+
+    problem.Evaluate(evaluate_options, &total_cost, &residuals, nullptr, nullptr);
+    problem.GetResidualBlocks(&residual_blocks);
+
+    int residual_index = 0;
+    feature_residual_outlier_set.clear();
+    for (size_t i = 0; i < residual_blocks.size(); ++i) {
+        ceres::ResidualBlockId block_id = residual_blocks[i];
+        
+        if (residual_block_index_map.find(block_id) == residual_block_index_map.end()) {
+            const ceres::CostFunction* cost_function = problem.GetCostFunctionForResidualBlock(block_id);
+            residual_index += cost_function->num_residuals();
+            continue;
+        }
+
+        int residual_f_cnt = residual_block_index_map[block_id].first;
+        double feature_depth = residual_block_index_map[block_id].second;
+
+        if(feature_depth >= 0.1) {
+            const ceres::CostFunction* cost_function = problem.GetCostFunctionForResidualBlock(block_id);
+            int num_residuals = cost_function->num_residuals();
+            std::vector<double> res(
+                residuals.begin() + residual_index,
+                residuals.begin() + residual_index + num_residuals
+            );
+            if(ESTIMATE_TD) {
+                for(int i=0;i<2;i++) res[i] /= ProjectionTdFactor::sqrt_info.coeff(0,0);
+            } else {
+                for(int i=0;i<2;i++) res[i] /= ProjectionFactor::sqrt_info.coeff(0,0);
+            }
+            residual_index += num_residuals;
+
+            float thres;
+            if(feature_depth < 30) thres = 0.007;
+            else if(feature_depth < 60) thres = 0.006;
+            else if(feature_depth < 100) thres = 0.005;
+            else if(feature_depth < 200) thres = 0.003;
+            else if(feature_depth < 300) thres = 0.002;
+            else if(feature_depth < 400) thres = 0.001;
+            else thres = 0.0005;
+
+            if(std::sqrt(res[0]*res[0] + res[1]*res[1]) > thres) {
+                feature_residual_outlier_set.insert(residual_f_cnt);
+                //ROS_DEBUG("feature Residual index %d | Residuals: [%.3f, %.3f]", residual_f_cnt, res[0], res[1]);
+            }
+        }
+    }
+
+    double2vector();
+    
+    ROS_DEBUG("whole time for ceres: %.2f ms", t_whole.toc());
+}
+
+void Estimator::optimization()
+{
+    /* 首先利用IMU递推位姿优化地图点深度 */
+    optimization_with_fixed_Pose();
+
+    ceres::Problem problem;
+    ceres::LossFunction *loss_function;
+    //loss_function = new ceres::HuberLoss(1.0);
+    loss_function = new ceres::CauchyLoss(1.0);
+    ROS_DEBUG("optimization...");
     for (int i = 0; i < WINDOW_SIZE + 1; i++)
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
@@ -747,6 +921,7 @@ void Estimator::optimization()
         
         Vector3d pts_i = it_per_id.feature_per_frame[0].point;
 
+        int feature_outlier = 1;
         for (auto &it_per_frame : it_per_id.feature_per_frame)
         {
             imu_j++;
@@ -755,28 +930,35 @@ void Estimator::optimization()
                 continue;
             }
             Vector3d pts_j = it_per_frame.point;
-            if (ESTIMATE_TD)
-            {
-                    ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
-                                                                     it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
-                                                                     it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
-                    problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
-                    /*
-                    double **para = new double *[5];
-                    para[0] = para_Pose[imu_i];
-                    para[1] = para_Pose[imu_j];
-                    para[2] = para_Ex_Pose[0];
-                    para[3] = para_Feature[feature_index];
-                    para[4] = para_Td[0];
-                    f_td->check(para);
-                    */
-            }
-            else
-            {
-                ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
-                problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
+            if (feature_residual_outlier_set.find(f_m_cnt) == feature_residual_outlier_set.end()) {
+                feature_outlier = 0;
+                if (ESTIMATE_TD)
+                {
+                        ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
+                                                                        it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
+                                                                        it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
+                        problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
+                        /*
+                        double **para = new double *[5];
+                        para[0] = para_Pose[imu_i];
+                        para[1] = para_Pose[imu_j];
+                        para[2] = para_Ex_Pose[0];
+                        para[3] = para_Feature[feature_index];
+                        para[4] = para_Td[0];
+                        f_td->check(para);
+                        */
+                }
+                else
+                {
+                    ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
+                    problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
+                }
             }
             f_m_cnt++;
+        }
+        if(feature_outlier) {
+            it_per_id.is_outlier = true;
+            ROS_DEBUG("outlier detected: feature id %d , start_frame %d, depth %f ", it_per_id.feature_id, it_per_id.start_frame, it_per_id.estimated_depth);
         }
     }
 

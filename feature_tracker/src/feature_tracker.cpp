@@ -396,8 +396,6 @@ void FeatureTracker::rejectWith_two_view(vector<uchar> &status, const vector<uch
 {
     Eigen::Matrix3d R  = R2.transpose() * R1;
     Eigen::Vector3d t  = R2.transpose() * (t1 - t2);
-    Eigen::Matrix3d R_ = R1.transpose() * R2;
-    Eigen::Vector3d t_ = R1.transpose() * (t2 - t1);
 
     float dist1, dist2;
     int size_a = status.size();
@@ -406,10 +404,7 @@ void FeatureTracker::rejectWith_two_view(vector<uchar> &status, const vector<uch
             t.z(),      0, -t.x(),
             -t.y(),  t.x(),      0;
     Eigen::Matrix3d E = skew_t * R;
-    skew_t <<     0, -t_.z(),  t_.y(),
-            t_.z(),      0, -t_.x(),
-            -t_.y(),  t_.x(),      0;
-    Eigen::Matrix3d E_ = skew_t * R_;
+    Eigen::Matrix3d E_ = E.transpose();
     int count_3D=0, count_2D=0;
     float ave_diff_3D=0, max_diff_3D=0, min_diff_3D=999;
     float ave_diff_2D=0, max_diff_2D=0, min_diff_2D=999;
@@ -449,11 +444,15 @@ void FeatureTracker::rejectWith_three_view(vector<uchar> &status, const vector<u
     const vector<Eigen::Vector3d> &points_0, const vector<Eigen::Vector3d> &points_1, const vector<Eigen::Vector3d> &points_2,
     const Vector3d &t0, const Matrix3d &R0, const Vector3d &t1, const Matrix3d &R1, const Vector3d &t2, const Matrix3d &R2)
 {
-    Eigen::Matrix3d R  = R0.transpose() * R2;
-    Eigen::Vector3d t  = R0.transpose() * (t2 - t0);
-    Eigen::Matrix3d R_  = R0.transpose() * R1;
-    Eigen::Vector3d t_  = R0.transpose() * (t1 - t0);
-
+    Eigen::Matrix3d R  = R2.transpose() * R0;
+    Eigen::Vector3d t  = R2.transpose() * (t0 - t2);
+    Eigen::Matrix3d R_  = R1.transpose() * R0;
+    Eigen::Vector3d t_  = R1.transpose() * (t0 - t1);
+    Eigen::Matrix<double, 3, 4> P1, P2;
+    P1.leftCols<3>() = Eigen::Matrix3d::Identity();
+    P1.rightCols<1>() = Eigen::Vector3d::Zero();
+    P2.leftCols<3>() = R;
+    P2.rightCols<1>() = t;
     int count_3D=0, count_2D=0, count_depth=0;
     float ave_diff_3D=0, max_diff_3D=0, min_diff_3D=999;
     float ave_diff_2D=0, max_diff_2D=0, min_diff_2D=999;
@@ -464,25 +463,19 @@ void FeatureTracker::rejectWith_three_view(vector<uchar> &status, const vector<u
             continue;
 
         Eigen::Vector3d f;
-        Eigen::Matrix<double, 3, 4> P;
-        Eigen::MatrixXd svd_A(2 * 2, 4);
+        Eigen::MatrixXd svd_A(4, 4);
 
-        P.leftCols<3>() = Eigen::Matrix3d::Identity();
-        P.rightCols<1>() = Eigen::Vector3d::Zero();
         f = points_0[i].normalized();
-        svd_A.row(0) = f[0] * P.row(2) - f[2] * P.row(0);
-        svd_A.row(1) = f[1] * P.row(2) - f[2] * P.row(1);
-
-        P.leftCols<3>() = R.transpose();
-        P.rightCols<1>() = -R.transpose() * t;
+        svd_A.row(0) = f[0] * P1.row(2) - f[2] * P1.row(0);
+        svd_A.row(1) = f[1] * P1.row(2) - f[2] * P1.row(1);
         f = points_2[i].normalized();
-        svd_A.row(2) = f[0] * P.row(2) - f[2] * P.row(0);
-        svd_A.row(3) = f[1] * P.row(2) - f[2] * P.row(1);
+        svd_A.row(2) = f[0] * P2.row(2) - f[2] * P2.row(0);
+        svd_A.row(3) = f[1] * P2.row(2) - f[2] * P2.row(1);
         Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
         
         double svd_dep = svd_V[2] / svd_V[3];
         Eigen::Vector3d points_3D = Vector3d(points_0[i].x(), points_0[i].y(), 1.0) * svd_dep;
-        Eigen::Vector3d prdicted_p1 = R_.transpose()  * (points_3D - t_);
+        Eigen::Vector3d prdicted_p1 = R_ * points_3D + t_;
         prdicted_p1 /= prdicted_p1.z();
         double diff = (prdicted_p1 - points_1[i]).norm();
 
@@ -503,12 +496,13 @@ void FeatureTracker::rejectWith_three_view(vector<uchar> &status, const vector<u
             if(diff < min_diff_2D) min_diff_2D = diff;
 
             float thres;
-
-            if(svd_dep < 50) thres = 0.005;
-            else if(svd_dep < 100) thres = 0.004;
+            if(svd_dep < 30) thres = 0.007;
+            else if(svd_dep < 60) thres = 0.006;
+            else if(svd_dep < 100) thres = 0.005;
             else if(svd_dep < 200) thres = 0.003;
             else if(svd_dep < 300) thres = 0.002;
-            else thres = 0.001;
+            else if(svd_dep < 400) thres = 0.001;
+            else thres = 0.0005;
 
             if(diff > thres) status[i] = 0;
         }

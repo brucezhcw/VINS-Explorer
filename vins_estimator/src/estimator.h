@@ -19,6 +19,7 @@
 #include "factor/marginalization_factor.h"
 
 #include <unordered_map>
+#include <unordered_set>
 #include <queue>
 #include <opencv2/core/eigen.hpp>
 
@@ -44,6 +45,7 @@ class Estimator
     void solveOdometry();
     void slideWindowNew();
     void slideWindowOld();
+    void optimization_with_fixed_Pose();
     void optimization();
     void vector2double();
     void double2vector();
@@ -137,4 +139,6 @@ class Estimator
     Vector3d relo_relative_t;
     Quaterniond relo_relative_q;
     double relo_relative_yaw;
+
+    std::unordered_set<int> feature_residual_outlier_set;
 };

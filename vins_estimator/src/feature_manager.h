@@ -28,6 +28,8 @@ class FeaturePerFrame
         velocity.x() = _point(5); 
         velocity.y() = _point(6); 
         cur_td = td;
+        is_used = false;
+        z = 0.0;
     }
     double cur_td;
     Vector3d point;
@@ -35,10 +37,8 @@ class FeaturePerFrame
     Vector2d velocity;
     double z;
     bool is_used;
-    double parallax;
     MatrixXd A;
     VectorXd b;
-    double dep_gradient;
 };
 
 class FeaturePerId
@@ -50,15 +50,12 @@ class FeaturePerId
 
     int used_num;
     bool is_outlier;
-    bool is_margin;
     double estimated_depth;
     int solve_flag; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
 
-    Vector3d gt_p;
-
     FeaturePerId(int _feature_id, int _start_frame)
         : feature_id(_feature_id), start_frame(_start_frame),
-          used_num(0), estimated_depth(-1.0), solve_flag(0)
+          used_num(0), is_outlier(false), estimated_depth(-1.0), solve_flag(0)
     {
     }
 
