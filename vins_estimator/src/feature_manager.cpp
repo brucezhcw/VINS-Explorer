@@ -148,7 +148,7 @@ void FeatureManager::setDepth(const VectorXd &x)
             continue;
 
         it_per_id.estimated_depth = 1.0 / x(++feature_index);
-        if (it_per_id.estimated_depth < 0.1 || it_per_id.estimated_depth > 500)
+        if (it_per_id.estimated_depth < 0.1)
         {
             it_per_id.solve_flag = 2;
             ROS_DEBUG("depth solve failed: feature id %d , start_frame %d, depth %f ", it_per_id.feature_id, it_per_id.start_frame, it_per_id.estimated_depth);

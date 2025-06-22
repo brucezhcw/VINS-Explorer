@@ -22,6 +22,9 @@ IMU递推位姿的误差随时间呈现指数形式增加，不同的IMU型号�
 但是短时间内的误差都会很小，视觉帧之间的时间差也就50 100ms样子，像这种时间差，IMU都可以提供非常精准的位姿估计。 
 甚至于消费级IMU在这种时间差内的误差都完全可以接受。因此该算法可以直接在大多数机器人应用上落地。 
 
+**2025年06月22日**： 
+前后端联合调优
+
 **2025年06月02日**： 
 实现了后端两步优化方法 optimization_with_fixed_Pose() + optimization():
 在optimization_with_fixed_Pose中，我们固定了pose信息，只允许优化特征点深度信息，并对优化后的残差进行校验。异常残差将不会存在于第二步优化中。
@@ -55,9 +58,14 @@ Debug;
 ## 未来工作
 
 Mono VIO算法持续优化
-Mono VIO算法向Stereo VIO迁移测试 
 
-## 测试环境
+尝试该算法向Stereo VIO方案迁移调优，推荐一个SOTA SVIO开源方案: [voxel_svio](https://github.com/ZikangYuan/voxel_svio)
+
+## 测试demo和环境
+
+https://www.bilibili.com/video/BV1T9NXzRE3p/
+
+https://www.youtube.com/watch?v=bTT2PX7oCCw
 
 i7-10870H CPU@2.20GHZ 
 

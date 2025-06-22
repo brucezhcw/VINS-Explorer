@@ -43,8 +43,8 @@ class FeatureTracker
 
     void showUndistortion(const string &name);
 
+    void reject_outlier(const Eigen::Matrix3d &R2, const Eigen::Vector3d &t2, const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D);
     void rejectWithF(const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D);
-    void rejectWith_predicted_Pose(const Eigen::Matrix3d &R2, const Eigen::Vector3d &t2, const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D);
     void rejectWith_two_view(vector<uchar> &status, const vector<uchar> &flag_3D, const vector<Eigen::Vector3d> &un_cur_p1s,
                     const vector<Eigen::Vector3d> &un_forw_p2s, const Vector3d &t1, const Matrix3d &R1, const Vector3d &t2, const Matrix3d &R2);
     void rejectWith_three_view(vector<uchar> &status, const vector<uchar> &need_to_check,

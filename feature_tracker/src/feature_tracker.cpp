@@ -120,7 +120,6 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
     if (cur_pts.size() > 0)
     {
         TicToc t_o;
-        float distance_3D = 0;
         vector<uchar> status;
         vector<float> err;
         forw_pts = cur_pts;
@@ -140,8 +139,6 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
                         forw_pts[i] = uv_tmp;
                         index_3D.push_back(i);
                         pts_3D.push_back(uv_tmp);
-                        float dis = distance(cur_pts[i], forw_pts[i]);
-                        if(dis > distance_3D) distance_3D = dis;
                     }
                 }
             }
@@ -219,10 +216,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, map<int, Vector3d> &id_point
 
     if (PUB_THIS_FRAME)
     {
-        if(t1.z() < -998.9 || t2.z() < -998.9 || cur_time-prev_time>1.5/FREQ || (t2 - t1).norm() <= 0.02)
-            rejectWithF(index_3D, pts_3D);
-        else
-            rejectWith_predicted_Pose(R2, t2, index_3D, pts_3D);
+        reject_outlier(R2, t2, index_3D, pts_3D);
 
         ROS_DEBUG("set mask begins");
         TicToc t_m;
@@ -309,76 +303,89 @@ void FeatureTracker::rejectWithF(const std::vector<size_t> &index_3D, const std:
     }
 }
 
-void FeatureTracker::rejectWith_predicted_Pose(const Eigen::Matrix3d &R2, const Eigen::Vector3d &t2, const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D)
+void FeatureTracker::reject_outlier(const Eigen::Matrix3d &R2, const Eigen::Vector3d &t2, const std::vector<size_t> &index_3D, const std::vector<cv::Point2f> &pts_3D)
 {
     if (forw_pts.size() > 0)
     {
-        ROS_DEBUG("reject by predicted Pose begins");
         TicToc t_f;
+        int method_select;
         int size_a = cur_pts.size();
         vector<uchar> status(size_a, 1);
-        vector<Eigen::Vector3d> un_cur_p1s(size_a), un_forw_p2s(size_a);
-        for (int i = 0; i < size_a; i++)
-        {
-            Eigen::Vector3d tmp_p;
-            m_camera->liftProjective(Eigen::Vector2d(cur_pts[i].x, cur_pts[i].y), tmp_p);
-            un_cur_p1s[i] = tmp_p / tmp_p.z();
 
-            m_camera->liftProjective(Eigen::Vector2d(forw_pts[i].x, forw_pts[i].y), tmp_p);
-            un_forw_p2s[i] = tmp_p / tmp_p.z();           
-        }
-        if(t0.z() > -998.9 && t1.z() > -998.9 && t2.z() > -998.9 && (t2 - t0).norm() > 0.02 &&
+        if(t0.z() > -998.9 && t1.z() > -998.9 && t2.z() > -998.9 && (t1 - t0).norm() > 0.03 && (t2 - t1).norm() > 0.03 &&
             cur_time-prev_time<1.5/FREQ && prev_time-pprev_time<1.5/FREQ) {
+            method_select = 0; //> 三视图几何校验
+        } else if (forw_pts.size() < 8 && t1.z() > -998.9 && t2.z() > -998.9 && (t2 - t1).norm() > 0.03 && cur_time-prev_time<1.5/FREQ) {
+            method_select = 1; //> 双视图几何校验
+        } else {
+            method_select = 2; //> 基础矩阵
+        }
+
+        if(method_select == 2) {
+            rejectWithF(index_3D, pts_3D);
+        } else {
+            vector<Eigen::Vector3d> un_cur_p1s(size_a), un_forw_p2s(size_a);
+            for (int i = 0; i < size_a; i++)
+            {
+                Eigen::Vector3d tmp_p;
+                m_camera->liftProjective(Eigen::Vector2d(cur_pts[i].x, cur_pts[i].y), tmp_p);
+                un_cur_p1s[i] = tmp_p / tmp_p.z();
+
+                m_camera->liftProjective(Eigen::Vector2d(forw_pts[i].x, forw_pts[i].y), tmp_p);
+                un_forw_p2s[i] = tmp_p / tmp_p.z();           
+            }
+            if(method_select == 0) {
             /* 三视图几何校验(点-点重投影误差)
                 1> 利用已知的帧间位姿变换在第1和第3帧中逐点进行三角化求解3D点
                 2> 将上述3D点逐点投影到第2帧图像
                 3> 验证点-点重投影误差 */
-            int three_view_count = 0;
-            vector<uchar> need_to_check;
-            vector<Eigen::Vector3d> un_pre_p0s(size_a);
-            for (int i = 0; i < size_a; i++)
-            {
-                int id = -1;
-                for (size_t j = 0; j < prev_ids.size(); j++)
+                int three_view_count = 0;
+                vector<uchar> need_to_check;
+                vector<Eigen::Vector3d> un_pre_p0s(size_a);
+                for (int i = 0; i < size_a; i++)
                 {
-                    if(prev_ids[j] == ids[i]) 
+                    int id = -1;
+                    for (size_t j = 0; j < prev_ids.size(); j++)
                     {
-                        id = j;
-                        break;
+                        if(prev_ids[j] == ids[i]) 
+                        {
+                            id = j;
+                            break;
+                        }
+                    }
+                    if(id < 0) {
+                        status[i] = 0;
+                        need_to_check.push_back(0);
+                    } else {
+                        three_view_count++;
+                        need_to_check.push_back(1);
+                        Eigen::Vector3d tmp_p;
+                        m_camera->liftProjective(Eigen::Vector2d(prev_pts[id].x, prev_pts[id].y), tmp_p);
+                        un_pre_p0s[i] = tmp_p / tmp_p.z();
                     }
                 }
-                if(id < 0) {
-                    status[i] = 0;
-                    need_to_check.push_back(0);
-                } else {
-                    three_view_count++;
-                    need_to_check.push_back(1);
-                    Eigen::Vector3d tmp_p;
-                    m_camera->liftProjective(Eigen::Vector2d(prev_pts[id].x, prev_pts[id].y), tmp_p);
-                    un_pre_p0s[i] = tmp_p / tmp_p.z();
+                for (size_t i = 0; i < index_3D.size(); i++)
+                {
+                    if(need_to_check[index_3D[i]] && distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
+                        need_to_check[index_3D[i]] = 2; //> 标记3D点
                 }
-            }
-            for (size_t i = 0; i < index_3D.size(); i++)
-            {
-                if(need_to_check[index_3D[i]] && distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
-                    need_to_check[index_3D[i]] = 2; //> 标记3D点
-            }
-            ROS_DEBUG("three view count: %d", three_view_count);
+                ROS_DEBUG("three view count: %d", three_view_count);
 
-            rejectWith_three_view(status, need_to_check, un_pre_p0s, un_cur_p1s, un_forw_p2s, t0, R0, t1, R1, t2, R2);
-        } else {
-            /* 双视图几何校验(点-线重投影误差)
-                1> 利用已知的帧间位姿变换构造本质矩阵E
-                2> 分别求解两帧图像中点投影到另一帧图像后与极线的距离
-                3> 验证最大点-线重投影距离 */
-            vector<uchar> flag_3D(size_a, 0);
-            for (size_t i = 0; i < index_3D.size(); i++)
-            {
-                if(distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
-                    flag_3D[index_3D[i]] = 1; //> 标记3D点
-            }
+                rejectWith_three_view(status, need_to_check, un_pre_p0s, un_cur_p1s, un_forw_p2s, t0, R0, t1, R1, t2, R2);
+            } else if(method_select == 1) {
+                /* 双视图几何校验(点-线重投影误差)
+                    1> 利用已知的帧间位姿变换构造本质矩阵E
+                    2> 分别求解两帧图像中点投影到另一帧图像后与极线的距离
+                    3> 验证最大点-线重投影距离 */
+                vector<uchar> flag_3D(size_a, 0);
+                for (size_t i = 0; i < index_3D.size(); i++)
+                {
+                    if(distance(forw_pts[index_3D[i]], pts_3D[i]) <= 5)
+                        flag_3D[index_3D[i]] = 1; //> 标记3D点
+                }
 
-            rejectWith_two_view(status, flag_3D, un_cur_p1s, un_forw_p2s, t1, R1, t2, R2);
+                rejectWith_two_view(status, flag_3D, un_cur_p1s, un_forw_p2s, t1, R1, t2, R2);
+            }
         }
 
         reduceVector(cur_pts, status);
@@ -418,7 +425,11 @@ void FeatureTracker::rejectWith_two_view(vector<uchar> &status, const vector<uch
         dist2 = std::abs(epipolar_l[0] * un_cur_p1s[i].x() + epipolar_l[1] * un_cur_p1s[i].y() +epipolar_l[2]) /
                             std::sqrt(SQR(epipolar_l[0]) + SQR(epipolar_l[1]));
         float max_dis = std::max(dist1, dist2);
-        if(max_dis > 0.003)
+
+        float thres = 0.003;
+        if (flag_3D[i] || track_cnt[i] > 3) thres *= 2;
+        
+        if(max_dis > thres)
             status[i] = 0;
         else
             status[i] = 1;
@@ -444,73 +455,76 @@ void FeatureTracker::rejectWith_three_view(vector<uchar> &status, const vector<u
     const vector<Eigen::Vector3d> &points_0, const vector<Eigen::Vector3d> &points_1, const vector<Eigen::Vector3d> &points_2,
     const Vector3d &t0, const Matrix3d &R0, const Vector3d &t1, const Matrix3d &R1, const Vector3d &t2, const Matrix3d &R2)
 {
-    Eigen::Matrix3d R  = R2.transpose() * R0;
-    Eigen::Vector3d t  = R2.transpose() * (t0 - t2);
-    Eigen::Matrix3d R_  = R1.transpose() * R0;
-    Eigen::Vector3d t_  = R1.transpose() * (t0 - t1);
-    Eigen::Matrix<double, 3, 4> P1, P2;
-    P1.leftCols<3>() = Eigen::Matrix3d::Identity();
-    P1.rightCols<1>() = Eigen::Vector3d::Zero();
-    P2.leftCols<3>() = R;
-    P2.rightCols<1>() = t;
+    Eigen::Matrix<double, 6, 4> svd_A;
+    Eigen::Matrix<double, 3, 4> P0, P1, P2;
+    P0.leftCols<3>() = R0.transpose();
+    P0.rightCols<1>() = -R0.transpose() * t0;
+    P1.leftCols<3>() = R1.transpose();
+    P1.rightCols<1>() = -R1.transpose() * t1;
+    P2.leftCols<3>() = R2.transpose();
+    P2.rightCols<1>() = -R2.transpose() * t2;
     int count_3D=0, count_2D=0, count_depth=0;
     float ave_diff_3D=0, max_diff_3D=0, min_diff_3D=999;
     float ave_diff_2D=0, max_diff_2D=0, min_diff_2D=999;
     float ave_depth=0, max_depth=0, min_depth=9999;
     for (unsigned int i = 0; i < points_2.size(); i++)
-    { /* 第0 2帧求解深度, 第1帧校验 */
+    { /* 第0 1 2帧求解深度, 第0 1 2帧分别校验重投影误差 */
         if(status[i] == 0 || need_to_check[i] == 0)
             continue;
 
-        Eigen::Vector3d f;
-        Eigen::MatrixXd svd_A(4, 4);
-
-        f = points_0[i].normalized();
-        svd_A.row(0) = f[0] * P1.row(2) - f[2] * P1.row(0);
-        svd_A.row(1) = f[1] * P1.row(2) - f[2] * P1.row(1);
-        f = points_2[i].normalized();
-        svd_A.row(2) = f[0] * P2.row(2) - f[2] * P2.row(0);
-        svd_A.row(3) = f[1] * P2.row(2) - f[2] * P2.row(1);
+        svd_A.row(0) = points_0[i].x() * P0.row(2) - P0.row(0);
+        svd_A.row(1) = points_0[i].y() * P0.row(2) - P0.row(1);
+        svd_A.row(2) = points_1[i].x() * P1.row(2) - P1.row(0);
+        svd_A.row(3) = points_1[i].y() * P1.row(2) - P1.row(1);
+        svd_A.row(4) = points_2[i].x() * P2.row(2) - P2.row(0);
+        svd_A.row(5) = points_2[i].y() * P2.row(2) - P2.row(1);
         Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
         
-        double svd_dep = svd_V[2] / svd_V[3];
-        Eigen::Vector3d points_3D = Vector3d(points_0[i].x(), points_0[i].y(), 1.0) * svd_dep;
-        Eigen::Vector3d prdicted_p1 = R_ * points_3D + t_;
-        prdicted_p1 /= prdicted_p1.z();
-        double diff = (prdicted_p1 - points_1[i]).norm();
+        Eigen::Vector3d points_3D = svd_V.head<3>() / svd_V[3];
+        
+        Eigen::Vector3d prdicted_p0 = R0.transpose() * (points_3D - t0);
+        float svd_dep0 = prdicted_p0.z();
+        prdicted_p0 /= svd_dep0;
+        Eigen::Vector3d prdicted_p1 = R1.transpose() * (points_3D - t1);
+        float svd_dep1 = prdicted_p1.z();
+        prdicted_p1 /= svd_dep1;
+        Eigen::Vector3d prdicted_p2 = R2.transpose() * (points_3D - t2);
+        float svd_dep2 = prdicted_p2.z();
+        prdicted_p2 /= svd_dep2;
+        float diff0 = (prdicted_p0.head<2>() - points_0[i].head<2>()).norm();
+        float diff1 = (prdicted_p1.head<2>() - points_1[i].head<2>()).norm();
+        float diff2 = (prdicted_p2.head<2>() - points_2[i].head<2>()).norm();
+        float diff = std::max({diff0, diff1, diff2});
 
-        if(svd_dep < 0.1 || svd_dep>500) {
+        if(svd_dep0 < 0.1f || svd_dep1 < 0.1f || svd_dep2 < 0.1f) {
             status[i] = 0;
             continue;
         }
+
+        float svd_dep = (svd_dep0 + svd_dep1 + svd_dep2) / 3;
+
+        float thres = 0.003;
+        if (need_to_check[i] == 2 || track_cnt[i] > 3) thres *= 2;
+
+        if(diff > thres) status[i] = 0;
+
         if(need_to_check[i] == 2) {
             count_3D++;
             ave_diff_3D += diff;
-            if(diff > max_diff_3D) max_diff_3D = diff;
-            if(diff < min_diff_3D) min_diff_3D = diff;
-
+            max_diff_3D = std::max(max_diff_3D, diff);
+            min_diff_3D = std::min(min_diff_3D, diff);
         } else {
             count_2D++;
             ave_diff_2D += diff;
-            if(diff > max_diff_2D) max_diff_2D = diff;
-            if(diff < min_diff_2D) min_diff_2D = diff;
-
-            float thres;
-            if(svd_dep < 30) thres = 0.007;
-            else if(svd_dep < 60) thres = 0.006;
-            else if(svd_dep < 100) thres = 0.005;
-            else if(svd_dep < 200) thres = 0.003;
-            else if(svd_dep < 300) thres = 0.002;
-            else if(svd_dep < 400) thres = 0.001;
-            else thres = 0.0005;
-
-            if(diff > thres) status[i] = 0;
+            max_diff_2D = std::max(max_diff_2D, diff);
+            min_diff_2D = std::min(min_diff_2D, diff);
         }
+
         if(status[i]) {
             count_depth++;
             ave_depth += svd_dep;
-            if(svd_dep > max_depth) max_depth = svd_dep;
-            if(svd_dep < min_depth) min_depth = svd_dep;
+            max_depth = std::max(max_depth, svd_dep);
+            min_depth = std::min(min_depth, svd_dep);
         }
     }
 
